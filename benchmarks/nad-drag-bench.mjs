@@ -23,7 +23,7 @@
 import { chromium } from 'playwright-core';
 
 const args = Object.fromEntries(
-    process.argv.slice(2).map((a) => {
+    globalThis.process.argv.slice(2).map((a) => {
         const m = a.match(/^--([^=]+)(?:=(.*))?$/);
         return m ? [m[1], m[2] ?? true] : [a, true];
     })
@@ -32,12 +32,12 @@ const args = Object.fromEntries(
 const SCENARIO = args.scenario ?? 'drag'; // 'drag' | 'zoom'
 const URL = args.url ?? 'http://localhost:5173/';
 const CONTAINER =
-    args.container ?? (SCENARIO === 'zoom' ? 'svg-container-nad-pegase-network-adaptive-zoom' : 'svg-container-nad-pegase-network');
+    args.container ??
+    (SCENARIO === 'zoom' ? 'svg-container-nad-pegase-network-adaptive-zoom' : 'svg-container-nad-pegase-network');
 const STEPS = Number(args.steps ?? (SCENARIO === 'zoom' ? 60 : 150));
 const REPEATS = Number(args.repeats ?? 7);
 const LABEL = args.label ?? 'run';
-const EXECUTABLE =
-    process.env.PW_CHROMIUM ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const EXECUTABLE = globalThis.process.env.PW_CHROMIUM ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 function median(xs) {
     const s = [...xs].sort((a, b) => a - b);
@@ -217,5 +217,5 @@ async function main() {
 
 main().catch((e) => {
     console.error(e);
-    process.exit(1);
+    globalThis.process.exit(1);
 });
