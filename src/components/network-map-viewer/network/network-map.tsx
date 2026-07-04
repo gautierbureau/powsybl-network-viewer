@@ -130,6 +130,11 @@ const INITIAL_CENTERED: Centered = {
 
 const DEFAULT_LOCATE_SUBSTATION_ZOOM_LEVEL = 12;
 
+// stable default callbacks: recreating them on each render would defeat the
+// useCallback/useMemo memoization of the handlers depending on them
+const noop = () => {};
+const defaultRenderPopover = (eId: string) => eId;
+
 type TooltipType = {
     equipmentId: string;
     equipmentType: EQUIPMENT_TYPES;
@@ -229,19 +234,19 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
         locateSubStationZoomLevel: rawProps.locateSubStationZoomLevel ?? DEFAULT_LOCATE_SUBSTATION_ZOOM_LEVEL,
         enablePitchAndRotate: rawProps.enablePitchAndRotate ?? true,
 
-        onSubstationClick: rawProps.onSubstationClick ?? (() => {}),
-        onSubstationClickChooseVoltageLevel: rawProps.onSubstationClickChooseVoltageLevel ?? (() => {}),
-        onSubstationMenuClick: rawProps.onSubstationMenuClick ?? (() => {}),
-        onVoltageLevelMenuClick: rawProps.onVoltageLevelMenuClick ?? (() => {}),
-        onLineMenuClick: rawProps.onLineMenuClick ?? (() => {}),
-        onTieLineMenuClick: rawProps.onTieLineMenuClick ?? (() => {}),
-        onHvdcLineMenuClick: rawProps.onHvdcLineMenuClick ?? (() => {}),
-        onManualRefreshClick: rawProps.onManualRefreshClick ?? (() => {}),
-        renderPopover: rawProps.renderPopover ?? ((eId) => eId),
-        onDrawPolygonModeActive: rawProps.onDrawPolygonModeActive ?? (() => {}),
+        onSubstationClick: rawProps.onSubstationClick ?? noop,
+        onSubstationClickChooseVoltageLevel: rawProps.onSubstationClickChooseVoltageLevel ?? noop,
+        onSubstationMenuClick: rawProps.onSubstationMenuClick ?? noop,
+        onVoltageLevelMenuClick: rawProps.onVoltageLevelMenuClick ?? noop,
+        onLineMenuClick: rawProps.onLineMenuClick ?? noop,
+        onTieLineMenuClick: rawProps.onTieLineMenuClick ?? noop,
+        onHvdcLineMenuClick: rawProps.onHvdcLineMenuClick ?? noop,
+        onManualRefreshClick: rawProps.onManualRefreshClick ?? noop,
+        renderPopover: rawProps.renderPopover ?? defaultRenderPopover,
+        onDrawPolygonModeActive: rawProps.onDrawPolygonModeActive ?? noop,
         //onDrawPolygonModeActive = (active) => console.log('polygon drawing mode active: ', active ? 'active' : 'inactive'),
-        onPolygonChanged: rawProps.onPolygonChanged ?? (() => {}),
-        onDrawEvent: rawProps.onDrawEvent ?? (() => {}),
+        onPolygonChanged: rawProps.onPolygonChanged ?? noop,
+        onDrawEvent: rawProps.onDrawEvent ?? noop,
         getNominalVoltageColor: rawProps.getNominalVoltageColor ?? getDefaultNominalVoltageColor,
     };
 

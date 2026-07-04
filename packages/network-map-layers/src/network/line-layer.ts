@@ -696,6 +696,17 @@ export class LineLayer extends CompositeLayer<Required<_LineLayerProps>> {
 
     recomputeForkLines(compositeData: CompositeData[], props: this['props']) {
         const mapMinProximityFactor = new Map<string, MinProximityFactor>();
+        // getVoltageLevelIndex is relatively expensive (it sorts the substation's nominal voltages),
+        // and lines connected to the same voltage level share the same index, so cache it per voltage level id
+        const voltageLevelIndexById = new Map<string, number>();
+        const getCachedVoltageLevelIndex = (voltageLevelId: string) => {
+            let index = voltageLevelIndexById.get(voltageLevelId);
+            if (index === undefined) {
+                index = this.getVoltageLevelIndex(voltageLevelId);
+                voltageLevelIndexById.set(voltageLevelId, index);
+            }
+            return index;
+        };
         compositeData.forEach((compositeData) => {
             compositeData.lines.forEach((line) => {
                 // @ts-expect-error TODO: manage undefined case
@@ -715,8 +726,8 @@ export class LineLayer extends CompositeLayer<Required<_LineLayerProps>> {
                 line.origin = first;
                 line.end = last;
 
-                line.substationIndexStart = this.getVoltageLevelIndex(line.voltageLevelId1);
-                line.substationIndexEnd = this.getVoltageLevelIndex(line.voltageLevelId2);
+                line.substationIndexStart = getCachedVoltageLevelIndex(line.voltageLevelId1);
+                line.substationIndexEnd = getCachedVoltageLevelIndex(line.voltageLevelId2);
 
                 line.angle = this.computeAngle(props, first, last);
                 line.angleStart = this.computeAngle(props, first, second);
