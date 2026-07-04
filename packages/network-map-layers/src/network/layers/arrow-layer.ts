@@ -105,7 +105,8 @@ type _ArrowLayerProps = {
     getLineAngles?: Accessor<Arrow, number[]>;
     /** distance in meters between line when no pixel clamping is applied */
     getDistanceBetweenLines?: Accessor<Arrow, number>;
-    // TODO missing getProximityFactors?: Accessor<Arrow, number[]>;
+    /** accessor for the [start, end] proximity factors used to offset arrows on parallel/fork lines */
+    getProximityFactors?: Accessor<Arrow, number[]>;
     /** max pixel distance */
     maxParallelOffset?: number;
     /** min pixel distance */
@@ -127,6 +128,7 @@ const defaultProps: DefaultProps<ArrowLayerProps> = {
     animated: { type: 'boolean', value: true },
     getLineParallelIndex: { type: 'accessor', value: 0 },
     getLineAngles: { type: 'accessor', value: [0, 0, 0] },
+    getProximityFactors: { type: 'accessor', value: [1, 1] },
     maxParallelOffset: { type: 'number', value: 100 },
     minParallelOffset: { type: 'number', value: 3 },
     // opacity prop is handled at the layer level for visually proportional perception https://deck.gl/docs/api-reference/core/layer#opacity

@@ -223,8 +223,10 @@ export function getEdgeInfoTypeClass(edgeInfoType: string | undefined): string |
     return edgeInfoType ? (EdgeInfoClassMap[edgeInfoType] ?? null) : null;
 }
 
+const EDGE_INFO_CLASSES: string[] = Object.values(EdgeInfoClassMap);
+
 export function getEdgeInfoClasses(): string[] {
-    return Object.values(EdgeInfoClassMap);
+    return EDGE_INFO_CLASSES;
 }
 
 // get arrow element direction, based on p value
