@@ -110,6 +110,11 @@ read layout.
   which cuts all three: #3 lighter emitted SVG (with powsybl-diagram) and, for
   extreme single diagrams, #5 virtualization. #4 (CSS/`content-visibility`) is a
   smaller, isolated win on the ~32% style share and can be done independently.
+  A first implementation of the #3 "lighter emitted SVG" lever is provided as
+  `benchmarks/nad-geometry-precision.patch` — a powsybl-diagram change that adds a
+  configurable `SvgParameters.geometryPrecision` (default 2, bit-identical output)
+  so a caller can emit fewer coordinate decimals and shrink the SVG string that
+  the browser must parse, style, and lay out. See the patch header for details.
 - **Phase 3 — only if needed.** #6 canvas/WebGL rendering for the very largest
   single diagrams.
 

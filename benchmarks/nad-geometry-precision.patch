@@ -1,0 +1,219 @@
+From 5a35d95ec4f995f2d8720d56131f0b37aabd9f9c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 4 Jul 2026 21:46:15 +0000
+Subject: [PATCH] [NAD] Add configurable geometry coordinate precision in the
+ SVG output
+
+Diagram geometry coordinates are written with a hard-coded 2 decimal places, on
+coordinates that are typically in the thousands (e.g. translate(-5372.65,...)).
+Once the viewBox is scaled to the screen, that is sub-pixel precision, so the
+extra decimals are wasted bytes: on a large network the NAD SVG is tens of MB,
+and the client viewer's first paint is dominated by parsing + styling + laying
+out that DOM (measured ~44% parse / ~32% style / ~24% layout, all scaling with
+output size).
+
+Add an `SvgParameters.geometryPrecision` option (default 2, reproducing the
+previous output) that controls the number of decimals used by every geometry
+coordinate (positions, radii, paths, transforms). Lowering it shrinks the SVG
+(smaller transfer + faster client parsing) at the cost of geometric precision.
+
+- SvgWriter.getFormattedValue now uses the configured precision (and the loop
+  path string, previously a hard-coded %.2f, goes through it too).
+- The parameter is excluded from the diagram metadata serialization
+  (@JsonIgnoreProperties): it is a generation-side output knob the viewer does
+  not consume, so reference metadata and all existing SVG references are
+  unchanged and the full NAD test suite passes at the default.
+- New GeometryPrecisionTest verifies precision 0 < 2 < 3 in output size and that
+  precision 0 yields integer coordinates.
+
+Note: bus-annulus arc paths still use a fixed 3-decimal format; routing those
+through the parameter too is left as a follow-up.
+---
+ .../com/powsybl/nad/svg/SvgParameters.java    | 20 ++++-
+ .../java/com/powsybl/nad/svg/SvgWriter.java   | 13 +--
+ .../nad/svg/GeometryPrecisionTest.java        | 83 +++++++++++++++++++
+ 3 files changed, 110 insertions(+), 6 deletions(-)
+ create mode 100644 network-area-diagram/src/test/java/com/powsybl/nad/svg/GeometryPrecisionTest.java
+
+diff --git a/network-area-diagram/src/main/java/com/powsybl/nad/svg/SvgParameters.java b/network-area-diagram/src/main/java/com/powsybl/nad/svg/SvgParameters.java
+index 681cbad7..4bf2a6b6 100644
+--- a/network-area-diagram/src/main/java/com/powsybl/nad/svg/SvgParameters.java
++++ b/network-area-diagram/src/main/java/com/powsybl/nad/svg/SvgParameters.java
+@@ -15,7 +15,7 @@ import java.util.Objects;
+ /**
+  * @author Florian Dupuy {@literal <florian.dupuy at rte-france.com>}
+  */
+-@JsonIgnoreProperties({"arrowHeight"})
++@JsonIgnoreProperties({"arrowHeight", "geometryPrecision"})
+ public class SvgParameters {
+ 
+     private Padding diagramPadding = new Padding(200);
+@@ -51,6 +51,7 @@ public class SvgParameters {
+     private int angleValuePrecision = 1;
+     private int currentValuePrecision = 0;
+     private int percentageValuePrecision = 0;
++    private int geometryPrecision = 2;
+     private double pstArrowHeadSize = 8;
+     private String undefinedValueSymbol = "";
+     private boolean highlightGraph;
+@@ -107,6 +108,7 @@ public class SvgParameters {
+         this.angleValuePrecision = other.angleValuePrecision;
+         this.currentValuePrecision = other.currentValuePrecision;
+         this.percentageValuePrecision = other.percentageValuePrecision;
++        this.geometryPrecision = other.geometryPrecision;
+         this.pstArrowHeadSize = other.pstArrowHeadSize;
+         this.undefinedValueSymbol = other.undefinedValueSymbol;
+         this.highlightGraph = other.highlightGraph;
+@@ -437,6 +439,22 @@ public class SvgParameters {
+         return this;
+     }
+ 
++    public int getGeometryPrecision() {
++        return geometryPrecision;
++    }
++
++    /**
++     * Number of decimal places used when writing SVG geometry coordinates (positions, radii,
++     * paths, transforms). Diagram coordinates are typically in the thousands, where 2 decimals is
++     * sub-pixel once the viewBox is scaled to screen; lowering this shrinks the SVG (smaller
++     * transfer and faster client-side parsing) at the cost of geometric precision. Defaults to 2,
++     * which reproduces the previous output.
++     */
++    public SvgParameters setGeometryPrecision(int geometryPrecision) {
++        this.geometryPrecision = geometryPrecision;
++        return this;
++    }
++
+     public ValueFormatter createValueFormatter() {
+         return new ValueFormatter(powerValuePrecision, voltageValuePrecision, currentValuePrecision, angleValuePrecision,
+             percentageValuePrecision, Locale.forLanguageTag(languageTag), undefinedValueSymbol);
+diff --git a/network-area-diagram/src/main/java/com/powsybl/nad/svg/SvgWriter.java b/network-area-diagram/src/main/java/com/powsybl/nad/svg/SvgWriter.java
+index f64c76f3..b94daa73 100644
+--- a/network-area-diagram/src/main/java/com/powsybl/nad/svg/SvgWriter.java
++++ b/network-area-diagram/src/main/java/com/powsybl/nad/svg/SvgWriter.java
+@@ -34,7 +34,6 @@ import java.nio.file.Path;
+ import java.util.*;
+ import java.util.function.Supplier;
+ import java.util.stream.Collectors;
+-import java.util.stream.Stream;
+ 
+ /**
+  * @author Florian Dupuy {@literal <florian.dupuy at rte-france.com>}
+@@ -435,8 +434,12 @@ public class SvgWriter {
+     }
+ 
+     private String getLoopPathString(BranchEdge edge, BranchEdge.Side side) {
+-        Object[] points = edge.getPoints(side).stream().flatMap(p -> Stream.of(p.x(), p.y())).toArray();
+-        return String.format(Locale.US, "M%.2f,%.2f L%.2f,%.2f C%.2f,%.2f %.2f,%.2f %.2f,%.2f", points);
++        List<Point> points = edge.getPoints(side);
++        return "M" + getFormattedValue(points.get(0).x()) + "," + getFormattedValue(points.get(0).y())
++                + " L" + getFormattedValue(points.get(1).x()) + "," + getFormattedValue(points.get(1).y())
++                + " C" + getFormattedValue(points.get(2).x()) + "," + getFormattedValue(points.get(2).y())
++                + " " + getFormattedValue(points.get(3).x()) + "," + getFormattedValue(points.get(3).y())
++                + " " + getFormattedValue(points.get(4).x()) + "," + getFormattedValue(points.get(4).y());
+     }
+ 
+     private void drawThreeWtEdge(XMLStreamWriter writer, ThreeWtEdge edge) throws XMLStreamException {
+@@ -1199,8 +1202,8 @@ public class SvgWriter {
+         }
+     }
+ 
+-    private static String getFormattedValue(double value) {
+-        return String.format(Locale.US, "%.2f", value);
++    private String getFormattedValue(double value) {
++        return String.format(Locale.US, "%." + svgParameters.getGeometryPrecision() + "f", value);
+     }
+ 
+     public String getPrefixedId(String id) {
+diff --git a/network-area-diagram/src/test/java/com/powsybl/nad/svg/GeometryPrecisionTest.java b/network-area-diagram/src/test/java/com/powsybl/nad/svg/GeometryPrecisionTest.java
+new file mode 100644
+index 00000000..91da0dc4
+--- /dev/null
++++ b/network-area-diagram/src/test/java/com/powsybl/nad/svg/GeometryPrecisionTest.java
+@@ -0,0 +1,83 @@
++/**
++ * Copyright (c) 2026, RTE (http://www.rte-france.com)
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ * SPDX-License-Identifier: MPL-2.0
++ */
++package com.powsybl.nad.svg;
++
++import com.powsybl.diagram.test.Networks;
++import com.powsybl.iidm.network.Network;
++import com.powsybl.nad.AbstractTest;
++import com.powsybl.nad.build.iidm.IntIdProvider;
++import com.powsybl.nad.build.iidm.NetworkGraphBuilder;
++import com.powsybl.nad.build.iidm.VoltageLevelFilter;
++import com.powsybl.nad.layout.BasicForceLayout;
++import com.powsybl.nad.layout.LayoutParameters;
++import com.powsybl.nad.model.Graph;
++import com.powsybl.nad.svg.iidm.DefaultLabelProvider;
++import com.powsybl.nad.svg.iidm.NominalVoltageStyleProvider;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++
++import java.io.StringWriter;
++import java.util.regex.Pattern;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNotEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++/**
++ * Checks that {@link SvgParameters#setGeometryPrecision(int)} controls the number of decimal places
++ * of the SVG geometry coordinates, which lets a caller shrink the emitted SVG.
++ */
++class GeometryPrecisionTest extends AbstractTest {
++
++    @BeforeEach
++    void setup() {
++        setLayoutParameters(new LayoutParameters());
++        setSvgParameters(new SvgParameters());
++    }
++
++    @Override
++    protected StyleProvider getStyleProvider(Network network) {
++        return new NominalVoltageStyleProvider(network);
++    }
++
++    @Override
++    protected LabelProvider getLabelProvider(Network network) {
++        return new DefaultLabelProvider(network, getSvgParameters());
++    }
++
++    private String writeSvg(Graph graph, int geometryPrecision) {
++        StringWriter writer = new StringWriter();
++        SvgParameters params = new SvgParameters().setGeometryPrecision(geometryPrecision);
++        new SvgWriter(params, getComponentLibrary(), getEdgeRouting()).writeSvg(graph, writer);
++        return writer.toString();
++    }
++
++    @Test
++    void testGeometryPrecisionControlsCoordinateDecimals() {
++        Network network = Networks.createTwoVoltageLevelsTwoTransformers();
++        // build + layout + style once, so the coordinate precision is the only variable between writes
++        Graph graph = new NetworkGraphBuilder(network, VoltageLevelFilter.NO_FILTER, getLabelProvider(network),
++                getLayoutParameters(), new IntIdProvider()).buildGraph();
++        new BasicForceLayout().run(graph, getLayoutParameters());
++        NetworkGraphBuilder.applyStyle(graph, getStyleProvider(network));
++
++        String svg0 = writeSvg(graph, 0);
++        String svg2 = writeSvg(graph, 2);
++        String svg3 = writeSvg(graph, 3);
++
++        // fewer decimals -> strictly smaller SVG
++        assertTrue(svg0.length() < svg2.length(), "precision 0 should be smaller than precision 2");
++        assertTrue(svg2.length() < svg3.length(), "precision 2 should be smaller than precision 3");
++        assertNotEquals(svg0, svg2);
++
++        // at precision 2 some translate coordinates carry decimals; at precision 0 none do
++        Pattern translateWithDecimal = Pattern.compile("translate\\([^)]*\\.[^)]*\\)");
++        assertTrue(translateWithDecimal.matcher(svg2).find(), "precision 2 should have fractional translate coordinates");
++        assertFalse(translateWithDecimal.matcher(svg0).find(), "precision 0 should have integer translate coordinates");
++    }
++}
+-- 
+2.43.0
+
