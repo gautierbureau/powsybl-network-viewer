@@ -30,8 +30,8 @@ import {
 } from '@powsybl/network-map-layers';
 import booleanPointInPolygon from '@turf/boolean-point-in-polygon';
 import type { Feature, Polygon } from 'geojson';
-import mapboxgl, { type MapMouseEvent as MapBoxLayerMouseEvent } from 'mapbox-gl';
-import maplibregl, { type MapLayerMouseEvent as MapLibreLayerMouseEvent } from 'maplibre-gl';
+import { type MapMouseEvent as MapBoxLayerMouseEvent } from 'mapbox-gl';
+import { type MapLayerMouseEvent as MapLibreLayerMouseEvent } from 'maplibre-gl';
 import {
     forwardRef,
     memo,
@@ -563,75 +563,102 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
         return isDragging ? 'grabbing' : cursorType;
     }
 
-    const layers: Layer[] = [];
-
     const _getNameOrId = useMemo(
         //TODO modify getNameOrId to accept undefined for the name
         () => (infos: MapSubstation) => getNameOrId({ ...infos, name: infos.name ?? null }),
         [getNameOrId]
     );
-    if (readyToDisplaySubstations) {
-        layers.push(
-            new SubstationLayer({
-                id: SUBSTATION_LAYER_PREFIX,
-                data: props.mapEquipments?.substations,
-                network: props.mapEquipments,
-                geoData: props.geoData,
-                getNominalVoltageColor: props.getNominalVoltageColor,
-                filteredNominalVoltages: props.filteredNominalVoltages,
-                labelsVisible: labelsVisible,
-                labelColor: foregroundNeutralColor,
-                labelSize: LABEL_SIZE,
-                pickable: true,
-                onHover: ({ object }) => {
-                    setCursorType(object ? 'pointer' : 'grab');
-                },
-                getNameOrId: _getNameOrId,
-            })
-        );
-    }
 
-    if (readyToDisplayLines) {
-        layers.push(
-            new LineLayer({
-                areFlowsValid: props.areFlowsValid,
-                id: LINE_LAYER_PREFIX,
-                data: mapEquipmentsLines,
-                network: props.mapEquipments,
-                updatedLines: props.updatedLines,
-                geoData: props.geoData,
-                getNominalVoltageColor: props.getNominalVoltageColor,
-                disconnectedLineColor: foregroundNeutralColor,
-                filteredNominalVoltages: props.filteredNominalVoltages,
-                lineFlowMode: props.lineFlowMode,
-                showLineFlow: props.visible && showLineFlow,
-                lineFlowColorMode: props.lineFlowColorMode,
-                lineFlowAlertThreshold: props.lineFlowAlertThreshold,
-                lineFullPath: (props.geoData?.linePositionsById.size ?? 0) > 0 && props.lineFullPath,
-                lineParallelPath: props.lineParallelPath,
-                labelsVisible: labelsVisible,
-                labelColor: foregroundNeutralColor,
-                labelSize: LABEL_SIZE,
-                pickable: true,
-                onHover: ({ object, x, y }) => {
-                    if (object) {
-                        setCursorType('pointer');
-                        const lineObject = object?.line ?? object;
-                        setTooltip({
-                            equipmentId: lineObject?.id,
-                            equipmentType: lineObject?.equipmentType,
-                            pointerX: x,
-                            pointerY: y,
-                            visible: showTooltip,
-                        });
-                    } else {
-                        setCursorType('grab');
-                        setTooltip(null);
-                    }
-                },
-            })
-        );
-    }
+    // Build the deck.gl layers only when their inputs change. Recreating them on every render
+    // (e.g. on each hover, which updates the tooltip/cursor state) is wasted work; keeping the
+    // same layer instances lets the deck.gl overlay skip diffing entirely.
+    const layers = useMemo<Layer[]>(() => {
+        const builtLayers: Layer[] = [];
+        if (readyToDisplaySubstations) {
+            builtLayers.push(
+                new SubstationLayer({
+                    id: SUBSTATION_LAYER_PREFIX,
+                    data: props.mapEquipments?.substations,
+                    network: props.mapEquipments,
+                    geoData: props.geoData,
+                    getNominalVoltageColor: props.getNominalVoltageColor,
+                    filteredNominalVoltages: props.filteredNominalVoltages,
+                    labelsVisible: labelsVisible,
+                    labelColor: foregroundNeutralColor,
+                    labelSize: LABEL_SIZE,
+                    pickable: true,
+                    onHover: ({ object }) => {
+                        setCursorType(object ? 'pointer' : 'grab');
+                    },
+                    getNameOrId: _getNameOrId,
+                })
+            );
+        }
+
+        if (readyToDisplayLines) {
+            builtLayers.push(
+                new LineLayer({
+                    areFlowsValid: props.areFlowsValid,
+                    id: LINE_LAYER_PREFIX,
+                    data: mapEquipmentsLines,
+                    network: props.mapEquipments,
+                    updatedLines: props.updatedLines,
+                    geoData: props.geoData,
+                    getNominalVoltageColor: props.getNominalVoltageColor,
+                    disconnectedLineColor: foregroundNeutralColor,
+                    filteredNominalVoltages: props.filteredNominalVoltages,
+                    lineFlowMode: props.lineFlowMode,
+                    showLineFlow: props.visible && showLineFlow,
+                    lineFlowColorMode: props.lineFlowColorMode,
+                    lineFlowAlertThreshold: props.lineFlowAlertThreshold,
+                    lineFullPath: (props.geoData?.linePositionsById.size ?? 0) > 0 && props.lineFullPath,
+                    lineParallelPath: props.lineParallelPath,
+                    labelsVisible: labelsVisible,
+                    labelColor: foregroundNeutralColor,
+                    labelSize: LABEL_SIZE,
+                    pickable: true,
+                    onHover: ({ object, x, y }) => {
+                        if (object) {
+                            setCursorType('pointer');
+                            const lineObject = object?.line ?? object;
+                            setTooltip({
+                                equipmentId: lineObject?.id,
+                                equipmentType: lineObject?.equipmentType,
+                                pointerX: x,
+                                pointerY: y,
+                                visible: showTooltip,
+                            });
+                        } else {
+                            setCursorType('grab');
+                            setTooltip(null);
+                        }
+                    },
+                })
+            );
+        }
+        return builtLayers;
+    }, [
+        readyToDisplaySubstations,
+        readyToDisplayLines,
+        props.mapEquipments,
+        props.geoData,
+        props.getNominalVoltageColor,
+        props.filteredNominalVoltages,
+        props.areFlowsValid,
+        props.updatedLines,
+        props.lineFlowMode,
+        props.visible,
+        props.lineFlowColorMode,
+        props.lineFlowAlertThreshold,
+        props.lineFullPath,
+        props.lineParallelPath,
+        mapEquipmentsLines,
+        labelsVisible,
+        showLineFlow,
+        showTooltip,
+        foregroundNeutralColor,
+        _getNameOrId,
+    ]);
 
     const initialViewState = {
         longitude: props.initialPosition?.[0] ?? 0,
@@ -683,18 +710,25 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
 
     const mapStyle = useMemo(() => getMapStyle(props.mapLibrary, props.mapTheme), [props.mapLibrary, props.mapTheme]);
 
-    const mapLib =
-        props.mapLibrary === MAPBOX
-            ? (mToken && {
-                  key: 'mapboxgl',
-                  mapLib: mapboxgl,
-                  mapboxAccessToken: mToken,
-              }) ||
-              undefined
-            : {
-                  key: 'maplibregl',
-                  mapLib: maplibregl,
-              };
+    // Load only the selected map engine, lazily. mapbox-gl and maplibre-gl are both large;
+    // importing them dynamically lets the consumer's bundler code-split the unused one out.
+    // The import promise is memoized so a new one isn't created on every render (react-map-gl
+    // would otherwise re-initialize the map each time the promise reference changes).
+    const mapLib = useMemo(() => {
+        if (props.mapLibrary === MAPBOX) {
+            return mToken
+                ? {
+                      key: 'mapboxgl',
+                      mapLib: import('mapbox-gl').then((module) => module.default),
+                      mapboxAccessToken: mToken,
+                  }
+                : undefined;
+        }
+        return {
+            key: 'maplibregl',
+            mapLib: import('maplibre-gl').then((module) => module.default),
+        };
+    }, [props.mapLibrary, mToken]);
 
     // because the mapLib prop of react-map-gl is not reactive, we need to
     // unmount/mount the Map with 'key', so we need also to reset all state
