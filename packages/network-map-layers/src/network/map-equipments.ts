@@ -72,16 +72,24 @@ export class MapEquipments {
     }
 
     updateEquipments<T extends MapEquipment>(currentEquipments: T[], newEquipments: T[]) {
+        // index new equipments by id (keep the first occurrence in case of duplicates)
+        const newEquipmentsById = new Map<string, T>();
+        newEquipments.forEach((equipment) => {
+            if (!newEquipmentsById.has(equipment.id)) {
+                newEquipmentsById.set(equipment.id, equipment);
+            }
+        });
+
         // replace current modified equipments
+        const currentEquipmentIds = new Set<string>();
         currentEquipments.forEach((equipment1, index) => {
-            const found = newEquipments.filter((equipment2) => equipment2.id === equipment1.id);
-            currentEquipments[index] = found.length > 0 ? found[0] : equipment1;
+            currentEquipmentIds.add(equipment1.id);
+            const found = newEquipmentsById.get(equipment1.id);
+            currentEquipments[index] = found ?? equipment1;
         });
 
         // add newly created equipments
-        const eqptsToAdd = newEquipments.filter(
-            (eqpt) => !currentEquipments.some((otherEqpt) => otherEqpt.id === eqpt.id)
-        );
+        const eqptsToAdd = newEquipments.filter((eqpt) => !currentEquipmentIds.has(eqpt.id));
         if (eqptsToAdd.length === 0) {
             return currentEquipments;
         }
@@ -94,24 +102,34 @@ export class MapEquipments {
             this.nominalVoltages = [];
         }
 
+        // index new substations by id (keep the first occurrence in case of duplicates)
+        const newSubstationsById = new Map<string, MapSubstation>();
+        substations.forEach((substation) => {
+            if (!newSubstationsById.has(substation.id)) {
+                newSubstationsById.set(substation.id, substation);
+            }
+        });
+
         // replace current modified substations
         let voltageLevelAdded = false;
+        const currentSubstationIds = new Set<string>();
         this.substations.forEach((substation1, index) => {
-            const found = substations.filter((substation2) => substation2.id === substation1.id);
-            if (found.length > 0) {
-                if (found[0].voltageLevels.length > substation1.voltageLevels.length) {
+            currentSubstationIds.add(substation1.id);
+            const found = newSubstationsById.get(substation1.id);
+            if (found !== undefined) {
+                if (found.voltageLevels.length > substation1.voltageLevels.length) {
                     voltageLevelAdded = true;
                 }
-                this.substations[index] = found[0];
+                this.substations[index] = found;
             }
         });
 
         // add newly created substations
         let substationAdded = false;
         substations.forEach((substation1) => {
-            const found = this.substations.find((substation2) => substation2.id === substation1.id);
-            if (found === undefined) {
+            if (!currentSubstationIds.has(substation1.id)) {
                 this.substations.push(substation1);
+                currentSubstationIds.add(substation1.id);
                 substationAdded = true;
             }
         });
@@ -179,10 +197,14 @@ export class MapEquipments {
     }
 
     removeBranchesOfVoltageLevel(branchesList: MapLine[], voltageLevelId: string) {
-        const remainingLines = branchesList.filter(
-            (l) => l.voltageLevelId1 !== voltageLevelId && l.voltageLevelId2 !== voltageLevelId
-        );
-        branchesList.filter((l) => !remainingLines.includes(l)).forEach((l) => this.linesById.delete(l.id));
+        const remainingLines: MapLine[] = [];
+        branchesList.forEach((line) => {
+            if (line.voltageLevelId1 !== voltageLevelId && line.voltageLevelId2 !== voltageLevelId) {
+                remainingLines.push(line);
+            } else {
+                this.linesById.delete(line.id);
+            }
+        });
 
         return remainingLines;
     }

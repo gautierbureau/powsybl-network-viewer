@@ -30,8 +30,8 @@ import {
 } from '@powsybl/network-map-layers';
 import booleanPointInPolygon from '@turf/boolean-point-in-polygon';
 import type { Feature, Polygon } from 'geojson';
-import mapboxgl, { type MapMouseEvent as MapBoxLayerMouseEvent } from 'mapbox-gl';
-import maplibregl, { type MapLayerMouseEvent as MapLibreLayerMouseEvent } from 'maplibre-gl';
+import { type MapMouseEvent as MapBoxLayerMouseEvent } from 'mapbox-gl';
+import { type MapLayerMouseEvent as MapLibreLayerMouseEvent } from 'maplibre-gl';
 import {
     forwardRef,
     memo,
@@ -130,6 +130,11 @@ const INITIAL_CENTERED: Centered = {
 
 const DEFAULT_LOCATE_SUBSTATION_ZOOM_LEVEL = 12;
 
+// stable default callbacks: recreating them on each render would defeat the
+// useCallback/useMemo memoization of the handlers depending on them
+const noop = () => {};
+const defaultRenderPopover = (eId: string) => eId;
+
 type TooltipType = {
     equipmentId: string;
     equipmentType: EQUIPMENT_TYPES;
@@ -137,6 +142,51 @@ type TooltipType = {
     pointerY: number;
     visible: boolean;
 };
+
+type MapTooltipHandle = { setTooltip: (tooltip: TooltipType | null) => void };
+
+// The tooltip position changes on every hover mousemove. Owning that state in its own
+// component, updated imperatively via a ref, keeps those updates from re-rendering the whole
+// NetworkMap (and rebuilding/redirtying the deck.gl overlay) on each move.
+const MapTooltip = forwardRef<
+    MapTooltipHandle,
+    {
+        visible: boolean;
+        shouldDisableToolTip: boolean;
+        color: string;
+        renderPopover: (equipmentId: string, divRef: RefObject<HTMLDivElement | null>) => ReactNode;
+    }
+>(({ visible, shouldDisableToolTip, color, renderPopover }, ref) => {
+    const [tooltip, setTooltip] = useState<TooltipType | null>(null);
+    const divRef = useRef<HTMLDivElement>(null);
+    useImperativeHandle(ref, () => ({ setTooltip }), []);
+
+    if (
+        !visible ||
+        !tooltip ||
+        !tooltip.visible ||
+        shouldDisableToolTip ||
+        // As of now only LINE tooltip is implemented, to be tweaked when other line tooltips exist
+        tooltip.equipmentType !== EQUIPMENT_TYPES.LINE
+    ) {
+        return null;
+    }
+    return (
+        <div
+            ref={divRef}
+            style={{
+                position: 'absolute',
+                color: color,
+                zIndex: 90,
+                pointerEvents: 'none',
+                left: tooltip.pointerX,
+                top: tooltip.pointerY,
+            }}
+        >
+            {renderPopover(tooltip.equipmentId, divRef)}
+        </div>
+    );
+});
 
 export type MenuClickFunction<T extends MapEquipment> = (equipment: T, eventX: number, eventY: number) => void;
 
@@ -229,19 +279,19 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
         locateSubStationZoomLevel: rawProps.locateSubStationZoomLevel ?? DEFAULT_LOCATE_SUBSTATION_ZOOM_LEVEL,
         enablePitchAndRotate: rawProps.enablePitchAndRotate ?? true,
 
-        onSubstationClick: rawProps.onSubstationClick ?? (() => {}),
-        onSubstationClickChooseVoltageLevel: rawProps.onSubstationClickChooseVoltageLevel ?? (() => {}),
-        onSubstationMenuClick: rawProps.onSubstationMenuClick ?? (() => {}),
-        onVoltageLevelMenuClick: rawProps.onVoltageLevelMenuClick ?? (() => {}),
-        onLineMenuClick: rawProps.onLineMenuClick ?? (() => {}),
-        onTieLineMenuClick: rawProps.onTieLineMenuClick ?? (() => {}),
-        onHvdcLineMenuClick: rawProps.onHvdcLineMenuClick ?? (() => {}),
-        onManualRefreshClick: rawProps.onManualRefreshClick ?? (() => {}),
-        renderPopover: rawProps.renderPopover ?? ((eId) => eId),
-        onDrawPolygonModeActive: rawProps.onDrawPolygonModeActive ?? (() => {}),
+        onSubstationClick: rawProps.onSubstationClick ?? noop,
+        onSubstationClickChooseVoltageLevel: rawProps.onSubstationClickChooseVoltageLevel ?? noop,
+        onSubstationMenuClick: rawProps.onSubstationMenuClick ?? noop,
+        onVoltageLevelMenuClick: rawProps.onVoltageLevelMenuClick ?? noop,
+        onLineMenuClick: rawProps.onLineMenuClick ?? noop,
+        onTieLineMenuClick: rawProps.onTieLineMenuClick ?? noop,
+        onHvdcLineMenuClick: rawProps.onHvdcLineMenuClick ?? noop,
+        onManualRefreshClick: rawProps.onManualRefreshClick ?? noop,
+        renderPopover: rawProps.renderPopover ?? defaultRenderPopover,
+        onDrawPolygonModeActive: rawProps.onDrawPolygonModeActive ?? noop,
         //onDrawPolygonModeActive = (active) => console.log('polygon drawing mode active: ', active ? 'active' : 'inactive'),
-        onPolygonChanged: rawProps.onPolygonChanged ?? (() => {}),
-        onDrawEvent: rawProps.onDrawEvent ?? (() => {}),
+        onPolygonChanged: rawProps.onPolygonChanged ?? noop,
+        onDrawEvent: rawProps.onDrawEvent ?? noop,
         getNominalVoltageColor: rawProps.getNominalVoltageColor ?? getDefaultNominalVoltageColor,
     };
 
@@ -252,7 +302,7 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
     const deckRef = useRef<MapboxOverlay>(null);
     const [centered, setCentered] = useState(INITIAL_CENTERED);
     const lastViewStateRef = useRef<ViewState>(undefined);
-    const [tooltip, setTooltip] = useState<TooltipType | null>(null);
+    const tooltipRef = useRef<MapTooltipHandle>(null);
     const theme = useTheme();
     const foregroundNeutralColor = useMemo(() => {
         const labelColor = decomposeColor(theme.palette.text.primary).values;
@@ -297,7 +347,6 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
         ];
     }, [props.mapEquipments?.hvdcLines, props.mapEquipments?.tieLines, props.mapEquipments?.lines]);
 
-    const divRef = useRef<HTMLDivElement>(null);
     const drawControlRef = useRef<MapboxDraw | undefined>(undefined);
 
     /** get polygon coordinates (features) or an empty object */
@@ -412,30 +461,6 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
         },
         [labelsVisible, props.arrowsZoomThreshold, props.labelsZoomThreshold, props.tooltipZoomThreshold]
     );
-
-    function renderTooltip() {
-        return (
-            tooltip &&
-            tooltip.visible &&
-            !shouldDisableToolTip &&
-            //As of now only LINE tooltip is implemented, the following condition is to be removed or tweaked once other types of line tooltip are implemented
-            tooltip.equipmentType === EQUIPMENT_TYPES.LINE && (
-                <div
-                    ref={divRef}
-                    style={{
-                        position: 'absolute',
-                        color: theme.palette.text.primary,
-                        zIndex: 90,
-                        pointerEvents: 'none',
-                        left: tooltip.pointerX,
-                        top: tooltip.pointerY,
-                    }}
-                >
-                    {props.renderPopover(tooltip.equipmentId, divRef)}
-                </div>
-            )
-        );
-    }
 
     // eslint rule don't understand what "prop" we use in props, so we need to have variable outside the useCallback
     const {
@@ -558,75 +583,102 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
         return isDragging ? 'grabbing' : cursorType;
     }
 
-    const layers: Layer[] = [];
-
     const _getNameOrId = useMemo(
         //TODO modify getNameOrId to accept undefined for the name
         () => (infos: MapSubstation) => getNameOrId({ ...infos, name: infos.name ?? null }),
         [getNameOrId]
     );
-    if (readyToDisplaySubstations) {
-        layers.push(
-            new SubstationLayer({
-                id: SUBSTATION_LAYER_PREFIX,
-                data: props.mapEquipments?.substations,
-                network: props.mapEquipments,
-                geoData: props.geoData,
-                getNominalVoltageColor: props.getNominalVoltageColor,
-                filteredNominalVoltages: props.filteredNominalVoltages,
-                labelsVisible: labelsVisible,
-                labelColor: foregroundNeutralColor,
-                labelSize: LABEL_SIZE,
-                pickable: true,
-                onHover: ({ object }) => {
-                    setCursorType(object ? 'pointer' : 'grab');
-                },
-                getNameOrId: _getNameOrId,
-            })
-        );
-    }
 
-    if (readyToDisplayLines) {
-        layers.push(
-            new LineLayer({
-                areFlowsValid: props.areFlowsValid,
-                id: LINE_LAYER_PREFIX,
-                data: mapEquipmentsLines,
-                network: props.mapEquipments,
-                updatedLines: props.updatedLines,
-                geoData: props.geoData,
-                getNominalVoltageColor: props.getNominalVoltageColor,
-                disconnectedLineColor: foregroundNeutralColor,
-                filteredNominalVoltages: props.filteredNominalVoltages,
-                lineFlowMode: props.lineFlowMode,
-                showLineFlow: props.visible && showLineFlow,
-                lineFlowColorMode: props.lineFlowColorMode,
-                lineFlowAlertThreshold: props.lineFlowAlertThreshold,
-                lineFullPath: (props.geoData?.linePositionsById.size ?? 0) > 0 && props.lineFullPath,
-                lineParallelPath: props.lineParallelPath,
-                labelsVisible: labelsVisible,
-                labelColor: foregroundNeutralColor,
-                labelSize: LABEL_SIZE,
-                pickable: true,
-                onHover: ({ object, x, y }) => {
-                    if (object) {
-                        setCursorType('pointer');
-                        const lineObject = object?.line ?? object;
-                        setTooltip({
-                            equipmentId: lineObject?.id,
-                            equipmentType: lineObject?.equipmentType,
-                            pointerX: x,
-                            pointerY: y,
-                            visible: showTooltip,
-                        });
-                    } else {
-                        setCursorType('grab');
-                        setTooltip(null);
-                    }
-                },
-            })
-        );
-    }
+    // Build the deck.gl layers only when their inputs change. Recreating them on every render
+    // (e.g. on each hover, which updates the tooltip/cursor state) is wasted work; keeping the
+    // same layer instances lets the deck.gl overlay skip diffing entirely.
+    const layers = useMemo<Layer[]>(() => {
+        const builtLayers: Layer[] = [];
+        if (readyToDisplaySubstations) {
+            builtLayers.push(
+                new SubstationLayer({
+                    id: SUBSTATION_LAYER_PREFIX,
+                    data: props.mapEquipments?.substations,
+                    network: props.mapEquipments,
+                    geoData: props.geoData,
+                    getNominalVoltageColor: props.getNominalVoltageColor,
+                    filteredNominalVoltages: props.filteredNominalVoltages,
+                    labelsVisible: labelsVisible,
+                    labelColor: foregroundNeutralColor,
+                    labelSize: LABEL_SIZE,
+                    pickable: true,
+                    onHover: ({ object }) => {
+                        setCursorType(object ? 'pointer' : 'grab');
+                    },
+                    getNameOrId: _getNameOrId,
+                })
+            );
+        }
+
+        if (readyToDisplayLines) {
+            builtLayers.push(
+                new LineLayer({
+                    areFlowsValid: props.areFlowsValid,
+                    id: LINE_LAYER_PREFIX,
+                    data: mapEquipmentsLines,
+                    network: props.mapEquipments,
+                    updatedLines: props.updatedLines,
+                    geoData: props.geoData,
+                    getNominalVoltageColor: props.getNominalVoltageColor,
+                    disconnectedLineColor: foregroundNeutralColor,
+                    filteredNominalVoltages: props.filteredNominalVoltages,
+                    lineFlowMode: props.lineFlowMode,
+                    showLineFlow: props.visible && showLineFlow,
+                    lineFlowColorMode: props.lineFlowColorMode,
+                    lineFlowAlertThreshold: props.lineFlowAlertThreshold,
+                    lineFullPath: (props.geoData?.linePositionsById.size ?? 0) > 0 && props.lineFullPath,
+                    lineParallelPath: props.lineParallelPath,
+                    labelsVisible: labelsVisible,
+                    labelColor: foregroundNeutralColor,
+                    labelSize: LABEL_SIZE,
+                    pickable: true,
+                    onHover: ({ object, x, y }) => {
+                        if (object) {
+                            setCursorType('pointer');
+                            const lineObject = object?.line ?? object;
+                            tooltipRef.current?.setTooltip({
+                                equipmentId: lineObject?.id,
+                                equipmentType: lineObject?.equipmentType,
+                                pointerX: x,
+                                pointerY: y,
+                                visible: showTooltip,
+                            });
+                        } else {
+                            setCursorType('grab');
+                            tooltipRef.current?.setTooltip(null);
+                        }
+                    },
+                })
+            );
+        }
+        return builtLayers;
+    }, [
+        readyToDisplaySubstations,
+        readyToDisplayLines,
+        props.mapEquipments,
+        props.geoData,
+        props.getNominalVoltageColor,
+        props.filteredNominalVoltages,
+        props.areFlowsValid,
+        props.updatedLines,
+        props.lineFlowMode,
+        props.visible,
+        props.lineFlowColorMode,
+        props.lineFlowAlertThreshold,
+        props.lineFullPath,
+        props.lineParallelPath,
+        mapEquipmentsLines,
+        labelsVisible,
+        showLineFlow,
+        showTooltip,
+        foregroundNeutralColor,
+        _getNameOrId,
+    ]);
 
     const initialViewState = {
         longitude: props.initialPosition?.[0] ?? 0,
@@ -678,18 +730,25 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
 
     const mapStyle = useMemo(() => getMapStyle(props.mapLibrary, props.mapTheme), [props.mapLibrary, props.mapTheme]);
 
-    const mapLib =
-        props.mapLibrary === MAPBOX
-            ? (mToken && {
-                  key: 'mapboxgl',
-                  mapLib: mapboxgl,
-                  mapboxAccessToken: mToken,
-              }) ||
-              undefined
-            : {
-                  key: 'maplibregl',
-                  mapLib: maplibregl,
-              };
+    // Load only the selected map engine, lazily. mapbox-gl and maplibre-gl are both large;
+    // importing them dynamically lets the consumer's bundler code-split the unused one out.
+    // The import promise is memoized so a new one isn't created on every render (react-map-gl
+    // would otherwise re-initialize the map each time the promise reference changes).
+    const mapLib = useMemo(() => {
+        if (props.mapLibrary === MAPBOX) {
+            return mToken
+                ? {
+                      key: 'mapboxgl',
+                      mapLib: import('mapbox-gl').then((module) => module.default),
+                      mapboxAccessToken: mToken,
+                  }
+                : undefined;
+        }
+        return {
+            key: 'maplibregl',
+            mapLib: import('maplibre-gl').then((module) => module.default),
+        };
+    }, [props.mapLibrary, mToken]);
 
     // because the mapLib prop of react-map-gl is not reactive, we need to
     // unmount/mount the Map with 'key', so we need also to reset all state
@@ -812,7 +871,7 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
                     // Sometimes onHover on layers is not triggered when the mouse leaves the layer
                     // (e.g. when leaving the map container too fast),
                     // so we need to reset the tooltip on mouse out of the map container
-                    setTooltip(null);
+                    tooltipRef.current?.setTooltip(null);
                 }}
             >
                 {props.displayOverlayLoader && renderOverlay()}
@@ -842,7 +901,13 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
                         pickingRadius={PICKING_RADIUS}
                     />
                 )}
-                {showTooltip && renderTooltip()}
+                <MapTooltip
+                    ref={tooltipRef}
+                    visible={showTooltip}
+                    shouldDisableToolTip={shouldDisableToolTip}
+                    color={theme.palette.text.primary}
+                    renderPopover={props.renderPopover}
+                />
                 {/* visualizePitch true makes the compass reset the pitch when clicked in addition to visualizing it */}
                 <NavigationControl visualizePitch={true} showCompass={props.enablePitchAndRotate} />
                 <DrawControl

@@ -696,6 +696,17 @@ export class LineLayer extends CompositeLayer<Required<_LineLayerProps>> {
 
     recomputeForkLines(compositeData: CompositeData[], props: this['props']) {
         const mapMinProximityFactor = new Map<string, MinProximityFactor>();
+        // getVoltageLevelIndex is relatively expensive (it sorts the substation's nominal voltages),
+        // and lines connected to the same voltage level share the same index, so cache it per voltage level id
+        const voltageLevelIndexById = new Map<string, number>();
+        const getCachedVoltageLevelIndex = (voltageLevelId: string) => {
+            let index = voltageLevelIndexById.get(voltageLevelId);
+            if (index === undefined) {
+                index = this.getVoltageLevelIndex(voltageLevelId);
+                voltageLevelIndexById.set(voltageLevelId, index);
+            }
+            return index;
+        };
         compositeData.forEach((compositeData) => {
             compositeData.lines.forEach((line) => {
                 // @ts-expect-error TODO: manage undefined case
@@ -715,8 +726,8 @@ export class LineLayer extends CompositeLayer<Required<_LineLayerProps>> {
                 line.origin = first;
                 line.end = last;
 
-                line.substationIndexStart = this.getVoltageLevelIndex(line.voltageLevelId1);
-                line.substationIndexEnd = this.getVoltageLevelIndex(line.voltageLevelId2);
+                line.substationIndexStart = getCachedVoltageLevelIndex(line.voltageLevelId1);
+                line.substationIndexEnd = getCachedVoltageLevelIndex(line.voltageLevelId2);
 
                 line.angle = this.computeAngle(props, first, last);
                 line.angleStart = this.computeAngle(props, first, second);
@@ -795,7 +806,10 @@ export class LineLayer extends CompositeLayer<Required<_LineLayerProps>> {
                     widthScale: 20,
                     widthMinPixels: 1,
                     widthMaxPixels: 2,
+                    // reuse the positions already computed in updateState (lineMap) instead of
+                    // recomputing them per line when the path buffer is (re)generated
                     getPath: (line) =>
+                        compositeData.lineMap?.get(line.id)?.positions ??
                         this.props.geoData.getLinePositions(this.props.network, line, this.props.lineFullPath),
                     // @ts-expect-error TODO: manage undefined case
                     getColor: (line) =>
@@ -850,8 +864,10 @@ export class LineLayer extends CompositeLayer<Required<_LineLayerProps>> {
                         sizeMaxPixels: 7,
                         getDistance: (arrow) => arrow.distance,
                         getLine: (arrow) => arrow.line,
-                        getLinePositions: (line) =>
-                            this.props.geoData.getLinePositions(this.props.network, line, this.props.lineFullPath),
+                        // read positions from the cache populated in updateState (the same source
+                        // the arrows/labels already use) instead of recomputing them per line
+                        // during the arrow texture build
+                        getLinePositions: (line) => compositeData.lineMap?.get(line.id)?.positions ?? [],
                         // @ts-expect-error TODO: manage undefined case
                         getColor: (arrow) =>
                             getLineColor(
@@ -867,6 +883,7 @@ export class LineLayer extends CompositeLayer<Required<_LineLayerProps>> {
                         getLineParallelIndex: (arrow: Arrow) => arrow.line.parallelIndex,
                         // @ts-expect-error TODO: manage undefined case
                         getLineAngles: (arrow) => [arrow.line.angleStart, arrow.line.angle, arrow.line.angleEnd],
+                        // @ts-expect-error TODO: manage undefined case
                         getProximityFactors: (arrow: Arrow) => [
                             arrow.line.proximityFactorStart,
                             arrow.line.proximityFactorEnd,
@@ -887,6 +904,9 @@ export class LineLayer extends CompositeLayer<Required<_LineLayerProps>> {
                             getLinePositions: linePathUpdateTriggers,
                             getLineParallelIndex: [this.props.lineParallelPath],
                             getLineAngles: linePathUpdateTriggers,
+                            // proximity factors are recomputed (in recomputeForkLines) on any
+                            // path/geo change, so the arrow offset buffer must regenerate with them
+                            getProximityFactors: linePathUpdateTriggers,
                             getColor: [
                                 this.props.disconnectedLineColor,
                                 this.props.lineFlowColorMode,
