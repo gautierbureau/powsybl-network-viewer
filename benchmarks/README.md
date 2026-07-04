@@ -29,6 +29,9 @@ npm run start
 
 # terminal 2 — measure, and optionally CPU-profile to find remaining hotspots
 node benchmarks/nad-drag-bench.mjs --label=optimized --steps=150 --repeats=7 --profile
+
+# a second scenario drives a wheel zoom on the adaptive-text-zoom viewer
+node benchmarks/nad-drag-bench.mjs --scenario=zoom --profile
 ```
 
 To get a before/after number, overlay the baseline source, restart the dev
@@ -56,3 +59,13 @@ is taken from `PW_CHROMIUM` or the default sandbox path
 ~15× faster per drag frame. After the change, a CPU profile of the drag shows
 the former linear metadata scans are gone; the residual cost is inherent DOM
 mutation (`setAttribute`) plus number formatting (`toFixed`).
+
+### Hotspot hunt (CPU profile, optimized build)
+
+- **drag**: no remaining algorithmic hotspot — the former `Array.find`/`filter`
+  metadata scans are absent from the profile; time is DOM-write-bound
+  (`setAttribute`), with smaller shares in `toFixed` formatting and scoped
+  per-edge `querySelector`. All are below this benchmark's noise floor, so no
+  further micro-optimization can be reliably confirmed.
+- **zoom** (adaptive text zoom): near-idle — the adaptive rebuild is
+  debounce-gated, so no function shows meaningful self-time.

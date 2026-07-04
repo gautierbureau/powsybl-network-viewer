@@ -29,9 +29,11 @@ const args = Object.fromEntries(
     })
 );
 
+const SCENARIO = args.scenario ?? 'drag'; // 'drag' | 'zoom'
 const URL = args.url ?? 'http://localhost:5173/';
-const CONTAINER = args.container ?? 'svg-container-nad-pegase-network';
-const STEPS = Number(args.steps ?? 150);
+const CONTAINER =
+    args.container ?? (SCENARIO === 'zoom' ? 'svg-container-nad-pegase-network-adaptive-zoom' : 'svg-container-nad-pegase-network');
+const STEPS = Number(args.steps ?? (SCENARIO === 'zoom' ? 60 : 150));
 const REPEATS = Number(args.repeats ?? 7);
 const LABEL = args.label ?? 'run';
 const EXECUTABLE =
@@ -101,6 +103,38 @@ function dragInPage(containerId, steps) {
     };
 }
 
+// Drives a zoom in/out sequence with wheel events, awaiting a frame between
+// each so panzoom + the viewBox MutationObserver (adaptive text zoom) actually
+// run. Zooming in past the adaptive threshold rebuilds edge infos / legends in
+// the viewbox, which is the hot path here. Timing includes rAF waits, so the
+// CPU profile (not the wall time) is what identifies the hotspots.
+async function zoomInPage(containerId, steps) {
+    const container = document.getElementById(containerId);
+    if (!container) throw new Error('container not found: ' + containerId);
+    const svg = container.querySelector('svg');
+    if (!svg) throw new Error('svg not rendered in ' + containerId);
+
+    const crect = container.getBoundingClientRect();
+    const cx = crect.left + crect.width / 2;
+    const cy = crect.top + crect.height / 2;
+    const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+
+    const fire = (deltaY) =>
+        svg.dispatchEvent(
+            new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, deltaY })
+        );
+
+    const t0 = performance.now();
+    // first zoom in hard to cross the adaptive threshold, then oscillate
+    for (let i = 0; i < steps; i++) {
+        const phase = i % 24;
+        fire(phase < 14 ? -120 : 120); // -deltaY = zoom in
+        await nextFrame();
+    }
+    const t1 = performance.now();
+    return { totalMs: t1 - t0, steps };
+}
+
 // Aggregate a CDP CPU profile into self-time by function (hitCount per node).
 function summarizeProfile(profile, topN = 25) {
     const byFn = new Map();
@@ -139,23 +173,28 @@ async function main() {
     // let layout settle
     await page.waitForTimeout(500);
 
-    // expose the drag function into the page
-    await page.addScriptTag({ content: `window.__drag = ${dragInPage.toString()}` });
-    // warmup (JIT, first-time index build, etc.)
-    const warm = await page.evaluate(({ c, s }) => window.__drag(c, s), { c: CONTAINER, s: 40 });
+    const fnName = SCENARIO === 'zoom' ? '__zoom' : '__drag';
+    const fnSrc = SCENARIO === 'zoom' ? zoomInPage.toString() : dragInPage.toString();
+    await page.addScriptTag({ content: `window.${fnName} = ${fnSrc}` });
+
+    const runOnce = (steps) => page.evaluate(({ c, s, f }) => window[f](c, s), { c: CONTAINER, s: steps, f: fnName });
+
+    // warmup (JIT, first-time index build, adaptive threshold crossing, ...)
+    const warm = await runOnce(SCENARIO === 'zoom' ? 20 : 40);
 
     const results = [];
     for (let r = 0; r < REPEATS; r++) {
-        const res = await page.evaluate(({ c, s }) => window.__drag(c, s), { c: CONTAINER, s: STEPS });
-        results.push(res);
+        results.push(await runOnce(STEPS));
         await page.waitForTimeout(60);
     }
 
-    const perFrame = results.map((r) => r.perFrameMs);
     const totals = results.map((r) => r.totalMs);
-    console.log(`\n=== ${LABEL} :: ${CONTAINER} :: ${STEPS} moves x ${REPEATS} repeats ===`);
-    console.log(`node dragged: ${warm.nodeId}  moved=${results.every((r) => r.moved)}`);
-    console.log(`per-frame ms:  median=${median(perFrame).toFixed(3)}  min=${Math.min(...perFrame).toFixed(3)}`);
+    console.log(`\n=== ${LABEL} :: ${SCENARIO} :: ${CONTAINER} :: ${STEPS} steps x ${REPEATS} repeats ===`);
+    if (SCENARIO === 'drag') {
+        const perFrame = results.map((r) => r.perFrameMs);
+        console.log(`node dragged: ${warm.nodeId}  moved=${results.every((r) => r.moved)}`);
+        console.log(`per-frame ms:  median=${median(perFrame).toFixed(3)}  min=${Math.min(...perFrame).toFixed(3)}`);
+    }
     console.log(`total ms:      median=${median(totals).toFixed(2)}  min=${Math.min(...totals).toFixed(2)}`);
 
     if (args.profile) {
@@ -164,10 +203,10 @@ async function main() {
         await client.send('Profiler.setSamplingInterval', { interval: 50 });
         await client.send('Profiler.start');
         for (let r = 0; r < REPEATS; r++) {
-            await page.evaluate(({ c, s }) => window.__drag(c, s), { c: CONTAINER, s: STEPS });
+            await runOnce(STEPS);
         }
         const { profile } = await client.send('Profiler.stop');
-        console.log(`\n--- CPU profile self-time (top functions during drag) ---`);
+        console.log(`\n--- CPU profile self-time (top functions during ${SCENARIO}) ---`);
         for (const row of summarizeProfile(profile)) {
             console.log(`${row.pct.padStart(5)}%  ${row.key}`);
         }
