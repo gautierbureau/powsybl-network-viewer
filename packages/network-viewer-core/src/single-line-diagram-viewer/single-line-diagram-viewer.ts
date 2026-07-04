@@ -342,59 +342,74 @@ export class SingleLineDiagramViewer {
     }
 
     private addNavigationArrow() {
-        if (this.onNextVoltageCallback !== null) {
-            let navigable = this.svgMetadata?.nodes.filter((el) => el.nextVId);
-            let vlList = this.svgMetadata?.nodes.map((element) => element.vid);
-            vlList = vlList?.filter((element, index) => element !== '' && vlList?.indexOf(element) === index);
-
-            //remove arrows if the arrow points to the current svg
-            navigable = navigable?.filter((element) => {
-                return vlList?.indexOf(element.nextVId) === -1;
-            });
-
-            const highestY = new Map();
-            const lowestY = new Map();
-            let y;
-
-            navigable?.forEach((element) => {
-                const elementById: HTMLElement | null = this.container.querySelector('#' + element.id);
-                if (elementById != null) {
-                    const transform: string[] | undefined = elementById?.getAttribute('transform')?.split(',');
-
-                    const ys = transform?.[1]?.match(/\d+/)?.[0];
-                    if (ys !== undefined) {
-                        y = Number.parseInt(ys, 10);
-                        if (highestY.get(element.vid) === undefined || y > highestY.get(element.vid)) {
-                            highestY.set(element.vid, y);
-                        }
-                        if (lowestY.get(element.vid) === undefined || y < lowestY.get(element.vid)) {
-                            lowestY.set(element.vid, y);
-                        }
-                    }
-                }
-            });
-
-            navigable?.forEach((element) => {
-                const elementById: HTMLElement | null = this.container.querySelector('#' + element.id);
-                if (elementById != null) {
-                    const transform: string[] | undefined = elementById?.getAttribute('transform')?.split(',');
-                    const xs = transform?.[0]?.match(/\d+/)?.[0];
-                    if (xs !== undefined) {
-                        const x = Number.parseInt(xs, 10);
-                        const feederWidth =
-                            this.svgMetadata?.components.find((comp) => comp.type === element.componentType)?.size
-                                .width || 0;
-                        this.createSvgArrow(
-                            elementById,
-                            element.direction,
-                            x + feederWidth / 2,
-                            highestY.get(element.vid),
-                            lowestY.get(element.vid)
-                        );
-                    }
-                }
-            });
+        if (this.onNextVoltageCallback === null) {
+            return;
         }
+        const nodes = this.svgMetadata?.nodes;
+        if (!nodes) {
+            return;
+        }
+
+        // voltage level ids present in this diagram; arrows pointing to one of them are dropped
+        const vlSet = new Set<string>();
+        nodes.forEach((node) => {
+            if (node.vid !== '') {
+                vlSet.add(node.vid);
+            }
+        });
+        const navigable = nodes.filter((el) => el.nextVId && !vlSet.has(el.nextVId));
+
+        // index component width by type once instead of scanning components per arrow
+        const widthByComponentType = new Map<string, number>();
+        this.svgMetadata?.components.forEach((comp) => {
+            if (!widthByComponentType.has(comp.type)) {
+                widthByComponentType.set(comp.type, comp.size.width);
+            }
+        });
+
+        const highestY = new Map();
+        const lowestY = new Map();
+
+        // resolve each element and parse its transform once (was queried/parsed twice before)
+        const parsed: { element: HTMLElement; x: number | undefined; node: (typeof navigable)[number] }[] = [];
+        navigable.forEach((element) => {
+            const elementById: HTMLElement | null = this.container.querySelector('#' + element.id);
+            if (elementById == null) {
+                return;
+            }
+            const transform: string[] | undefined = elementById.getAttribute('transform')?.split(',');
+            const ys = transform?.[1]?.match(/\d+/)?.[0];
+            const xs = transform?.[0]?.match(/\d+/)?.[0];
+            if (ys !== undefined) {
+                const y = Number.parseInt(ys, 10);
+                if (highestY.get(element.vid) === undefined || y > highestY.get(element.vid)) {
+                    highestY.set(element.vid, y);
+                }
+                if (lowestY.get(element.vid) === undefined || y < lowestY.get(element.vid)) {
+                    lowestY.set(element.vid, y);
+                }
+            }
+            parsed.push({
+                element: elementById,
+                x: xs !== undefined ? Number.parseInt(xs, 10) : undefined,
+                node: element,
+            });
+        });
+
+        parsed.forEach(({ element, x, node }) => {
+            if (x === undefined) {
+                return;
+            }
+            const feederWidth = widthByComponentType.get(node.componentType) ?? 0;
+            this.createSvgArrow(
+                element,
+                node.direction,
+                x + feederWidth / 2,
+                highestY.get(node.vid),
+                lowestY.get(node.vid),
+                node.nextVId
+            );
+        });
     }
 
     private readonly setArrowsStyle = (target: SVGElement, color1: string, color2: string) => {
@@ -408,11 +423,17 @@ export class SingleLineDiagramViewer {
         }
     };
 
-    private createSvgArrow(element: HTMLElement, position: string, x: number, highestY: number, lowestY: number) {
+    private createSvgArrow(
+        element: HTMLElement,
+        position: string,
+        x: number,
+        highestY: number,
+        lowestY: number,
+        nextVId: string
+    ) {
         const svgInsert: HTMLElement | null = element?.parentElement;
         if (svgInsert !== undefined && svgInsert !== null) {
             const group = document.createElementNS(SVG_NS, 'g');
-            const svgMetadata = this.svgMetadata;
             let y;
 
             if (position === 'TOP') {
@@ -446,10 +467,7 @@ export class SingleLineDiagramViewer {
                 if (dragged || event.button !== 0) {
                     return;
                 }
-                const meta = svgMetadata?.nodes.find((other) => other.id === element.id);
-                if (meta !== undefined && meta !== null) {
-                    this.onNextVoltageCallback?.(meta.nextVId, event);
-                }
+                this.onNextVoltageCallback?.(nextVId, event);
             });
 
             //handling the color changes when hovering
@@ -494,7 +512,9 @@ export class SingleLineDiagramViewer {
     }
 
     private addFeederSelectionRect(svgText: SVGTextElement, backgroundColor: string) {
-        svgText.style.setProperty('fill', backgroundColor);
+        // Read layout (getBBox / getComputedStyle) BEFORE mutating the label's fill.
+        // Writing the style first would dirty layout and force a synchronous reflow on the
+        // getBBox read; the fill color affects neither the bounding box nor the padding.
         const selectionBackgroundColor = 'currentColor';
         const selectionPadding = 4;
         const bounds = svgText.getBBox();
@@ -524,6 +544,8 @@ export class SingleLineDiagramViewer {
                 selectionRect.setAttribute('transform', transformAttribute);
             }
         }
+        // apply the label fill now that all layout reads are done
+        svgText.style.setProperty('fill', backgroundColor);
         svgText.parentNode?.insertBefore(selectionRect, svgText);
     }
 
