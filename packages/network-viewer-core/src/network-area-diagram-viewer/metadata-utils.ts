@@ -11,6 +11,7 @@ import {
     BusNodeMetadata,
     DiagramMetadata,
     EdgeMetadata,
+    InjectionMetadata,
     NodeMetadata,
     PointMetadata,
     TextNodeMetadata,
@@ -156,6 +157,8 @@ const textNodesBySvgIdCache = new WeakMap<DiagramMetadata, Map<string, TextNodeM
 const textNodesByVlNodeCache = new WeakMap<DiagramMetadata, Map<string, TextNodeMetadata>>();
 const busNodesByVlNodeCache = new WeakMap<DiagramMetadata, Map<string, BusNodeMetadata[]>>();
 const edgesBySvgIdCache = new WeakMap<DiagramMetadata, Map<string, EdgeMetadata>>();
+const injectionsBySvgIdCache = new WeakMap<DiagramMetadata, Map<string, InjectionMetadata>>();
+const injectionsByVlNodeCache = new WeakMap<DiagramMetadata, Map<string, InjectionMetadata[]>>();
 const edgesByNodeCache = new WeakMap<DiagramMetadata, Map<string, EdgeMetadata[]>>();
 
 // build an index keyed by the given function; in case of duplicated keys,
@@ -268,6 +271,37 @@ export function getEdgeMetadata(edgeId: string, diagramMetadata: DiagramMetadata
         return undefined;
     }
     return getIndex(edgesBySvgIdCache, diagramMetadata, diagramMetadata.edges, (edge) => edge.svgId).get(edgeId);
+}
+
+export function getInjectionMetadata(
+    injectionId: string,
+    diagramMetadata: DiagramMetadata | null
+): InjectionMetadata | undefined {
+    if (!diagramMetadata) {
+        return undefined;
+    }
+    return getIndex(
+        injectionsBySvgIdCache,
+        diagramMetadata,
+        diagramMetadata.injections,
+        (injection) => injection.svgId
+    ).get(injectionId);
+}
+
+// get the injections belonging to a voltage level node
+// note: the returned array is shared and must not be modified by the caller
+export function getVoltageLevelInjections(
+    vlNodeId: string,
+    diagramMetadata: DiagramMetadata | null
+): InjectionMetadata[] {
+    if (!diagramMetadata) {
+        return [];
+    }
+    return (
+        getGroupIndex(injectionsByVlNodeCache, diagramMetadata, diagramMetadata.injections, (injection) => [
+            injection.vlNodeId,
+        ]).get(vlNodeId) ?? []
+    );
 }
 
 // get the bus nodes belonging to a voltage level node

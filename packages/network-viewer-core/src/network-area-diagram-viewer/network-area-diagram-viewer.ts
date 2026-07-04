@@ -139,7 +139,7 @@ export class NetworkAreaDiagramViewer {
     bendLines: boolean = false;
     onBendLineCallback: OnBendLineCallbackType | null;
     straightenedElement: SVGGraphicsElement | null = null;
-    bendableLines: string[] = [];
+    bendableLines: Set<string> = new Set();
 
     linePointIndexMap = new Map<string, { edgeId: string; index: number }>();
 
@@ -1199,11 +1199,12 @@ export class NetworkAreaDiagramViewer {
 
     private updateInjections(vlNode: SVGGraphicsElement, position: Point) {
         // get edges connected to the the node we are moving
-        const injections: InjectionMetadata[] | undefined = this.diagramMetadata?.injections?.filter(
-            (inj) => inj.vlNodeId == vlNode.id
+        const injections: InjectionMetadata[] = MetadataUtils.getVoltageLevelInjections(
+            vlNode.id,
+            this.diagramMetadata
         );
         const translation = this.getTranslation(position);
-        injections?.forEach((inj) => {
+        injections.forEach((inj) => {
             this.updateSvgElementPosition(inj.svgId, translation);
             this.updateSvgElementPosition(inj.edgeInfo?.svgId, translation);
         });
@@ -1253,10 +1254,8 @@ export class NetworkAreaDiagramViewer {
     }
 
     private addInjectionEdges(vlNodeId: string, injectionsEdges: Map<string, InjectionMetadata[]>) {
-        const injections: InjectionMetadata[] | undefined = this.diagramMetadata?.injections?.filter(
-            (injection) => injection.vlNodeId == vlNodeId
-        );
-        injections?.forEach((inj) => {
+        const injections: InjectionMetadata[] = MetadataUtils.getVoltageLevelInjections(vlNodeId, this.diagramMetadata);
+        injections.forEach((inj) => {
             this.addInjectionEdge(inj.busNodeId, inj, injectionsEdges);
         });
     }
@@ -2805,7 +2804,7 @@ export class NetworkAreaDiagramViewer {
     }
 
     private handleInjectionHover(element: SVGElement, mousePosition: Point) {
-        const injection = this.diagramMetadata?.injections?.find((inj) => inj.svgId === element.id);
+        const injection = MetadataUtils.getInjectionMetadata(element.id, this.diagramMetadata);
         if (injection) {
             const equipmentId = injection.equipmentId ?? '';
             const equipmentType = injection.componentType ?? '';
@@ -2822,7 +2821,7 @@ export class NetworkAreaDiagramViewer {
 
             // Show preview points for bending if bend lines is enabled and edge is bendable
             if (this.bendLines) {
-                const isBendable = this.bendableLines.includes(edge.svgId);
+                const isBendable = this.bendableLines.has(edge.svgId);
                 if (isBendable) {
                     this.showEdgePreviewPoints(edge);
                 }
@@ -2885,12 +2884,12 @@ export class NetworkAreaDiagramViewer {
                         linesPointsElement
                     );
                 }
-                this.bendableLines.push(edge.svgId);
+                this.bendableLines.add(edge.svgId);
             } else {
-                this.bendableLines.push(edge.svgId);
+                this.bendableLines.add(edge.svgId);
             }
         }
-        if (this.bendableLines.length > 0) {
+        if (this.bendableLines.size > 0) {
             this.bendLines = true;
             this.svgDraw?.node.firstElementChild?.appendChild(linesPointsElement);
         }
@@ -2912,7 +2911,7 @@ export class NetworkAreaDiagramViewer {
         const linePointsElement = this.svgDraw?.node.querySelector('.nad-line-points');
         linePointsElement?.remove();
         this.linePointIndexMap.clear();
-        this.bendableLines = [];
+        this.bendableLines = new Set();
         this.bendLines = false;
     }
 

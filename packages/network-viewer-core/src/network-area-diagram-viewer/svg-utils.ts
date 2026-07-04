@@ -103,7 +103,7 @@ export function isBendable(element: SVGElement): boolean {
     return element.classList.contains('nad-line-point');
 }
 
-export function getBendableLineFrom(element: SVGElement, bendableIds: string[]): SVGElement | undefined {
+export function getBendableLineFrom(element: SVGElement, bendableIds: ReadonlySet<string>): SVGElement | undefined {
     if (isBendableLine(element, bendableIds)) {
         return element;
     } else if (element.parentElement) {
@@ -111,12 +111,12 @@ export function getBendableLineFrom(element: SVGElement, bendableIds: string[]):
     }
 }
 
-export function isBendableLine(element: SVGElement, bendableIds: string[]): boolean {
+export function isBendableLine(element: SVGElement, bendableIds: ReadonlySet<string>): boolean {
     return (
         hasId(element) &&
         element.parentNode != null &&
         classIsContainerOfLines(element.parentNode as SVGElement) &&
-        bendableIds.includes(element.id)
+        bendableIds.has(element.id)
     );
 }
 
