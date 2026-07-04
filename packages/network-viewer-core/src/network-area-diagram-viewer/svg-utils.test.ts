@@ -150,11 +150,11 @@ test('getBendableFrom', () => {
 });
 
 test('getBendableLineFrom', () => {
-    let bendableLine = SvgUtils.getBendableLineFrom(getSvgNode(), ['14']);
+    let bendableLine = SvgUtils.getBendableLineFrom(getSvgNode(), new Set(['14']));
     expect(bendableLine).toBeUndefined();
-    bendableLine = SvgUtils.getBendableLineFrom(getSvgLineEdge(), ['14']);
+    bendableLine = SvgUtils.getBendableLineFrom(getSvgLineEdge(), new Set(['14']));
     expect(bendableLine).not.toBeUndefined();
-    bendableLine = SvgUtils.getBendableLineFrom(getSvgLineEdge(), ['16']);
+    bendableLine = SvgUtils.getBendableLineFrom(getSvgLineEdge(), new Set(['16']));
     expect(bendableLine).toBeUndefined();
 });
 
