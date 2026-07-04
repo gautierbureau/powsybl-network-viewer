@@ -30,6 +30,9 @@ export type {
 export { LayoutParameters } from './network-area-diagram-viewer/layout-parameters';
 export { SvgParameters } from './network-area-diagram-viewer/svg-parameters';
 
+// Utilities
+export { lazyMount, type LazyMountOptions } from './lazy-mount';
+
 // Single Line Diagram Viewer exports
 export {
     SingleLineDiagramViewer,

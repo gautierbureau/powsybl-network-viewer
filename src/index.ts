@@ -26,6 +26,8 @@ export {
     type NadViewerParameters,
     LayoutParameters,
     SvgParameters,
+    lazyMount,
+    type LazyMountOptions,
     SingleLineDiagramViewer,
     type OnBreakerCallbackType,
     type OnBusCallbackType,
