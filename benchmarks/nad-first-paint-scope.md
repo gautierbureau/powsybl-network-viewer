@@ -46,11 +46,41 @@ server-rendered SVG into the DOM.
 
 The 38 ms measures JavaScript construction. After it, the browser must run
 **style recalculation + layout + paint** over the thousands of injected SVG
-elements, which happens asynchronously and is **not** in that number — and is
-likely larger. There is direct evidence already in the code: the
-`attachCursorOverlay` comment documents a *"multi-second freeze from CSS
-recalculation across thousands of descendants"*. So the real time-to-visible is
-probably style/layout-bound, not parse-bound.
+elements, which happens asynchronously and is **not** in that number. Phase 0
+below measures it — and it is more than half of first-paint.
+
+## Phase 0 results — full first-paint breakdown
+
+Measured on the demo page (so the `.nad-*` CSS is loaded, giving realistic
+style matching) by constructing the viewer then forcing each browser phase in
+turn: `getComputedStyle(...)` to flush style recalc, `getBoundingClientRect()`
+to flush layout. Median of 6, LOD/adaptive off so construction itself does not
+read layout.
+
+| phase | case1354pegase (1.3 MiB) | ieee300-VL9006 (28 KiB) |
+| --- | --- | --- |
+| construct (JS + build SVG DOM) | 44.4 ms (44%) | 1.5 ms (43%) |
+| style recalc | 32.3 ms (32%) | 1.2 ms (34%) |
+| layout | 24.4 ms (24%) | 0.8 ms (23%) |
+| **synchronous first-paint** | **~101 ms** | **~3.5 ms** |
+| + to painted frame (paint/composite/idle) | ~62 ms | ~30 ms |
+
+**Findings:**
+
+- **First-paint is ~101 ms for pegase — the JS-only figure (~38 ms) was under
+  half of it.** The style-recalc + layout tail hypothesised above is real: it is
+  **~56%** of the synchronous work.
+- The split (**~44% construct / ~32% style / ~24% layout**) is **stable across
+  diagram sizes** (pegase vs ieee300), so all three phases scale together with
+  element count.
+- It is therefore **not purely parse-bound nor purely style-bound** — it is
+  roughly balanced. The highest-leverage levers are the ones that cut **element
+  count / size**, because those reduce all three phases at once (#3 lighter SVG,
+  #5 virtualization). A CSS-only fix (#4) only touches the ~32% style share.
+- Measured in dev mode; style/layout/paint are native (dev ≈ prod) and ~86% of
+  `construct` is native `innerHTML`, so these numbers are close to production for
+  the dominant phases. A production Performance-timeline capture is still worth
+  doing to confirm paint/composite.
 
 ## Options
 
@@ -65,16 +95,23 @@ probably style/layout-bound, not parse-bound.
 
 ## Recommended phased plan
 
-- **Phase 0 — validate (~0.5–1 day).** Production build + real network; capture a
-  full Performance timeline (not just a CPU profile) to split JS construction vs
-  style-recalc vs layout vs paint. This decides whether to invest in #2/#3
-  (parse-bound) or #4/#5 (style/layout-bound).
-- **Phase 1 — quick win (~1–2 days).** #1 lazy off-screen construction — highest
-  ROI for the common multi-viewer page, low risk. (Prototyped below.) Optionally
-  #2 chunked insertion if a single diagram is still a long task.
-- **Phase 2 — sustained (depends on Phase 0).** #3 lighter SVG (with
-  powsybl-diagram) and/or #4 CSS/style-recalc.
-- **Phase 3 — only if needed.** #5 virtualization for extreme single diagrams.
+- **Phase 0 — validate. ✅ Done (see results above).** First-paint is ~101 ms for
+  pegase, split ~44% construct / ~32% style / ~24% layout — roughly balanced, so
+  the biggest levers are the ones that cut element count/size (they reduce all
+  three phases). A production Performance-timeline capture remains a nice-to-have
+  to confirm the paint/composite tail.
+- **Phase 1 — quick win. ✅ Prototyped + shipped as `lazyMount`.** Highest ROI for
+  the common multi-viewer page (each viewer costs ~101 ms, so not building the
+  off-screen ones is the biggest single win), low risk. Optionally #2 chunked
+  insertion if a single diagram is still a long task (~101 ms is over the 50 ms
+  long-task threshold).
+- **Phase 2 — sustained (now informed by Phase 0).** Because the cost is balanced
+  across construct/style/layout, prioritise **element-count/size reduction**,
+  which cuts all three: #3 lighter emitted SVG (with powsybl-diagram) and, for
+  extreme single diagrams, #5 virtualization. #4 (CSS/`content-visibility`) is a
+  smaller, isolated win on the ~32% style share and can be done independently.
+- **Phase 3 — only if needed.** #6 canvas/WebGL rendering for the very largest
+  single diagrams.
 
 ## Explicitly not worth doing
 
