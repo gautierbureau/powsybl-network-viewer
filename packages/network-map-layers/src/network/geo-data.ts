@@ -63,8 +63,9 @@ export class GeoData {
         fetchedPositions.forEach((pos) => this.substationPositionsById.set(pos.id, pos.coordinate));
         // If a substation position is requested but not present in the fetched results, we delete its position.
         // It allows to cancel the position of a substation when the server can't situate it anymore after a network modification (for example a line deletion).
+        const fetchedPositionIds = new Set(fetchedPositions.map((pos) => pos.id));
         substationIdsToUpdate
-            .filter((id) => !fetchedPositions.map((pos) => pos.id).includes(id))
+            .filter((id) => !fetchedPositionIds.has(id))
             .forEach((id) => this.substationPositionsById.delete(id));
     }
 
@@ -89,9 +90,8 @@ export class GeoData {
         // If a line position is requested but not present in the fetched results, we delete its position.
         // For lines, this code is not really necessary as we draw lines in [(0, 0), (0, 0)] when it is connected to a (0, 0) point (see getLinePositions())
         // But it's cleaner to avoid keeping old ignored data in geo data.
-        lineIdsToUpdate
-            .filter((id) => !fetchedPositions.map((pos) => pos.id).includes(id))
-            .forEach((id) => this.linePositionsById.delete(id));
+        const fetchedPositionIds = new Set(fetchedPositions.map((pos) => pos.id));
+        lineIdsToUpdate.filter((id) => !fetchedPositionIds.has(id)).forEach((id) => this.linePositionsById.delete(id));
     }
 
     /**
