@@ -143,6 +143,51 @@ type TooltipType = {
     visible: boolean;
 };
 
+type MapTooltipHandle = { setTooltip: (tooltip: TooltipType | null) => void };
+
+// The tooltip position changes on every hover mousemove. Owning that state in its own
+// component, updated imperatively via a ref, keeps those updates from re-rendering the whole
+// NetworkMap (and rebuilding/redirtying the deck.gl overlay) on each move.
+const MapTooltip = forwardRef<
+    MapTooltipHandle,
+    {
+        visible: boolean;
+        shouldDisableToolTip: boolean;
+        color: string;
+        renderPopover: (equipmentId: string, divRef: RefObject<HTMLDivElement | null>) => ReactNode;
+    }
+>(({ visible, shouldDisableToolTip, color, renderPopover }, ref) => {
+    const [tooltip, setTooltip] = useState<TooltipType | null>(null);
+    const divRef = useRef<HTMLDivElement>(null);
+    useImperativeHandle(ref, () => ({ setTooltip }), []);
+
+    if (
+        !visible ||
+        !tooltip ||
+        !tooltip.visible ||
+        shouldDisableToolTip ||
+        // As of now only LINE tooltip is implemented, to be tweaked when other line tooltips exist
+        tooltip.equipmentType !== EQUIPMENT_TYPES.LINE
+    ) {
+        return null;
+    }
+    return (
+        <div
+            ref={divRef}
+            style={{
+                position: 'absolute',
+                color: color,
+                zIndex: 90,
+                pointerEvents: 'none',
+                left: tooltip.pointerX,
+                top: tooltip.pointerY,
+            }}
+        >
+            {renderPopover(tooltip.equipmentId, divRef)}
+        </div>
+    );
+});
+
 export type MenuClickFunction<T extends MapEquipment> = (equipment: T, eventX: number, eventY: number) => void;
 
 export type NetworkMapProps = {
@@ -257,7 +302,7 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
     const deckRef = useRef<MapboxOverlay>(null);
     const [centered, setCentered] = useState(INITIAL_CENTERED);
     const lastViewStateRef = useRef<ViewState>(undefined);
-    const [tooltip, setTooltip] = useState<TooltipType | null>(null);
+    const tooltipRef = useRef<MapTooltipHandle>(null);
     const theme = useTheme();
     const foregroundNeutralColor = useMemo(() => {
         const labelColor = decomposeColor(theme.palette.text.primary).values;
@@ -302,7 +347,6 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
         ];
     }, [props.mapEquipments?.hvdcLines, props.mapEquipments?.tieLines, props.mapEquipments?.lines]);
 
-    const divRef = useRef<HTMLDivElement>(null);
     const drawControlRef = useRef<MapboxDraw | undefined>(undefined);
 
     /** get polygon coordinates (features) or an empty object */
@@ -417,30 +461,6 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
         },
         [labelsVisible, props.arrowsZoomThreshold, props.labelsZoomThreshold, props.tooltipZoomThreshold]
     );
-
-    function renderTooltip() {
-        return (
-            tooltip &&
-            tooltip.visible &&
-            !shouldDisableToolTip &&
-            //As of now only LINE tooltip is implemented, the following condition is to be removed or tweaked once other types of line tooltip are implemented
-            tooltip.equipmentType === EQUIPMENT_TYPES.LINE && (
-                <div
-                    ref={divRef}
-                    style={{
-                        position: 'absolute',
-                        color: theme.palette.text.primary,
-                        zIndex: 90,
-                        pointerEvents: 'none',
-                        left: tooltip.pointerX,
-                        top: tooltip.pointerY,
-                    }}
-                >
-                    {props.renderPopover(tooltip.equipmentId, divRef)}
-                </div>
-            )
-        );
-    }
 
     // eslint rule don't understand what "prop" we use in props, so we need to have variable outside the useCallback
     const {
@@ -621,7 +641,7 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
                         if (object) {
                             setCursorType('pointer');
                             const lineObject = object?.line ?? object;
-                            setTooltip({
+                            tooltipRef.current?.setTooltip({
                                 equipmentId: lineObject?.id,
                                 equipmentType: lineObject?.equipmentType,
                                 pointerX: x,
@@ -630,7 +650,7 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
                             });
                         } else {
                             setCursorType('grab');
-                            setTooltip(null);
+                            tooltipRef.current?.setTooltip(null);
                         }
                     },
                 })
@@ -851,7 +871,7 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
                     // Sometimes onHover on layers is not triggered when the mouse leaves the layer
                     // (e.g. when leaving the map container too fast),
                     // so we need to reset the tooltip on mouse out of the map container
-                    setTooltip(null);
+                    tooltipRef.current?.setTooltip(null);
                 }}
             >
                 {props.displayOverlayLoader && renderOverlay()}
@@ -881,7 +901,13 @@ const NetworkMap = forwardRef<NetworkMapRef, NetworkMapProps>((rawProps, ref) =>
                         pickingRadius={PICKING_RADIUS}
                     />
                 )}
-                {showTooltip && renderTooltip()}
+                <MapTooltip
+                    ref={tooltipRef}
+                    visible={showTooltip}
+                    shouldDisableToolTip={shouldDisableToolTip}
+                    color={theme.palette.text.primary}
+                    renderPopover={props.renderPopover}
+                />
                 {/* visualizePitch true makes the compass reset the pitch when clicked in addition to visualizing it */}
                 <NavigationControl visualizePitch={true} showCompass={props.enablePitchAndRotate} />
                 <DrawControl
