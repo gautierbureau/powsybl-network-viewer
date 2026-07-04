@@ -11,6 +11,7 @@ import {
     BusNodeMetadata,
     DiagramMetadata,
     EdgeMetadata,
+    InjectionMetadata,
     NodeMetadata,
     PointMetadata,
     TextNodeMetadata,
@@ -143,15 +144,190 @@ export function getGroupedEdgesIndexKey(edge: EdgeMetadata): string {
     return edge.node1 < edge.node2 ? edge.node1 + '_' + edge.node2 : edge.node2 + '_' + edge.node1;
 }
 
+// Lazily built indexes of the diagram metadata, to avoid linear scans of the metadata arrays
+// in hot paths (drag, hover and zoom handlers call the lookup functions below once per edge/node).
+// The indexes are keyed by the metadata object itself (WeakMap), so a new metadata object
+// automatically gets fresh indexes; the metadata arrays are never structurally modified after
+// the viewer is created (only the properties of their elements are updated), so the indexes
+// stay valid for the lifetime of the metadata object.
+const nodesBySvgIdCache = new WeakMap<DiagramMetadata, Map<string, NodeMetadata>>();
+const busNodesBySvgIdCache = new WeakMap<DiagramMetadata, Map<string, BusNodeMetadata>>();
+const busNodesByEquipmentIdCache = new WeakMap<DiagramMetadata, Map<string, BusNodeMetadata>>();
+const textNodesBySvgIdCache = new WeakMap<DiagramMetadata, Map<string, TextNodeMetadata>>();
+const textNodesByVlNodeCache = new WeakMap<DiagramMetadata, Map<string, TextNodeMetadata>>();
+const busNodesByVlNodeCache = new WeakMap<DiagramMetadata, Map<string, BusNodeMetadata[]>>();
+const edgesBySvgIdCache = new WeakMap<DiagramMetadata, Map<string, EdgeMetadata>>();
+const injectionsBySvgIdCache = new WeakMap<DiagramMetadata, Map<string, InjectionMetadata>>();
+const injectionsByVlNodeCache = new WeakMap<DiagramMetadata, Map<string, InjectionMetadata[]>>();
+const edgesByNodeCache = new WeakMap<DiagramMetadata, Map<string, EdgeMetadata[]>>();
+
+// build an index keyed by the given function; in case of duplicated keys,
+// keep the first element, to get the same result as Array.prototype.find
+function getIndex<K, T>(
+    cache: WeakMap<DiagramMetadata, Map<K, T>>,
+    diagramMetadata: DiagramMetadata,
+    elements: T[] | undefined,
+    keyGetter: (element: T) => K
+): Map<K, T> {
+    let index = cache.get(diagramMetadata);
+    if (!index) {
+        index = new Map<K, T>();
+        for (const element of elements ?? []) {
+            const key = keyGetter(element);
+            if (!index.has(key)) {
+                index.set(key, element);
+            }
+        }
+        cache.set(diagramMetadata, index);
+    }
+    return index;
+}
+
+function getGroupIndex<T>(
+    cache: WeakMap<DiagramMetadata, Map<string, T[]>>,
+    diagramMetadata: DiagramMetadata,
+    elements: T[] | undefined,
+    keysGetter: (element: T) => string[]
+): Map<string, T[]> {
+    let index = cache.get(diagramMetadata);
+    if (!index) {
+        index = new Map<string, T[]>();
+        for (const element of elements ?? []) {
+            for (const key of keysGetter(element)) {
+                const group = index.get(key);
+                if (group) {
+                    group.push(element);
+                } else {
+                    index.set(key, [element]);
+                }
+            }
+        }
+        cache.set(diagramMetadata, index);
+    }
+    return index;
+}
+
 export function getBusNodeMetadata(
     busNodeId: string,
     diagramMetadata: DiagramMetadata | null
 ): BusNodeMetadata | undefined {
-    return diagramMetadata?.busNodes.find((busNode) => busNode.svgId == busNodeId);
+    if (!diagramMetadata) {
+        return undefined;
+    }
+    return getIndex(busNodesBySvgIdCache, diagramMetadata, diagramMetadata.busNodes, (busNode) => busNode.svgId).get(
+        busNodeId
+    );
+}
+
+export function getBusNodeMetadataByEquipmentId(
+    equipmentId: string,
+    diagramMetadata: DiagramMetadata | null
+): BusNodeMetadata | undefined {
+    if (!diagramMetadata) {
+        return undefined;
+    }
+    return getIndex(
+        busNodesByEquipmentIdCache,
+        diagramMetadata,
+        diagramMetadata.busNodes,
+        (busNode) => busNode.equipmentId
+    ).get(equipmentId);
 }
 
 export function getNodeMetadata(nodeId: string, diagramMetadata: DiagramMetadata | null): NodeMetadata | undefined {
-    return diagramMetadata?.nodes.find((node) => node.svgId == nodeId);
+    if (!diagramMetadata) {
+        return undefined;
+    }
+    return getIndex(nodesBySvgIdCache, diagramMetadata, diagramMetadata.nodes, (node) => node.svgId).get(nodeId);
+}
+
+export function getTextNodeMetadata(
+    textNodeId: string,
+    diagramMetadata: DiagramMetadata | null
+): TextNodeMetadata | undefined {
+    if (!diagramMetadata) {
+        return undefined;
+    }
+    return getIndex(textNodesBySvgIdCache, diagramMetadata, diagramMetadata.textNodes, (node) => node.svgId).get(
+        textNodeId
+    );
+}
+
+// get the text node attached to a voltage level node (the first one, if several)
+export function getVoltageLevelTextNode(
+    vlNodeId: string,
+    diagramMetadata: DiagramMetadata | null
+): TextNodeMetadata | undefined {
+    if (!diagramMetadata) {
+        return undefined;
+    }
+    return getIndex(textNodesByVlNodeCache, diagramMetadata, diagramMetadata.textNodes, (node) => node.vlNode).get(
+        vlNodeId
+    );
+}
+
+export function getEdgeMetadata(edgeId: string, diagramMetadata: DiagramMetadata | null): EdgeMetadata | undefined {
+    if (!diagramMetadata) {
+        return undefined;
+    }
+    return getIndex(edgesBySvgIdCache, diagramMetadata, diagramMetadata.edges, (edge) => edge.svgId).get(edgeId);
+}
+
+export function getInjectionMetadata(
+    injectionId: string,
+    diagramMetadata: DiagramMetadata | null
+): InjectionMetadata | undefined {
+    if (!diagramMetadata) {
+        return undefined;
+    }
+    return getIndex(
+        injectionsBySvgIdCache,
+        diagramMetadata,
+        diagramMetadata.injections,
+        (injection) => injection.svgId
+    ).get(injectionId);
+}
+
+// get the injections belonging to a voltage level node
+// note: the returned array is shared and must not be modified by the caller
+export function getVoltageLevelInjections(
+    vlNodeId: string,
+    diagramMetadata: DiagramMetadata | null
+): InjectionMetadata[] {
+    if (!diagramMetadata) {
+        return [];
+    }
+    return (
+        getGroupIndex(injectionsByVlNodeCache, diagramMetadata, diagramMetadata.injections, (injection) => [
+            injection.vlNodeId,
+        ]).get(vlNodeId) ?? []
+    );
+}
+
+// get the bus nodes belonging to a voltage level node
+// note: the returned array is shared and must not be modified by the caller
+export function getVoltageLevelBusNodes(vlNodeId: string, diagramMetadata: DiagramMetadata | null): BusNodeMetadata[] {
+    if (!diagramMetadata) {
+        return [];
+    }
+    return (
+        getGroupIndex(busNodesByVlNodeCache, diagramMetadata, diagramMetadata.busNodes, (busNode) => [
+            busNode.vlNode,
+        ]).get(vlNodeId) ?? []
+    );
+}
+
+// get the edges connected to a voltage level node (loop edges appear only once)
+// note: the returned array is shared and must not be modified by the caller
+export function getConnectedEdges(nodeId: string, diagramMetadata: DiagramMetadata | null): EdgeMetadata[] {
+    if (!diagramMetadata) {
+        return [];
+    }
+    return (
+        getGroupIndex(edgesByNodeCache, diagramMetadata, diagramMetadata.edges, (edge) =>
+            edge.node1 == edge.node2 ? [edge.node1] : [edge.node1, edge.node2]
+        ).get(nodeId) ?? []
+    );
 }
 
 // get node move (original and new position)

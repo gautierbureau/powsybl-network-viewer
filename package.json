@@ -38,6 +38,7 @@
         "prepublishOnly": "$npm_execpath run build",
         "test": "vitest run",
         "test:coverage": "vitest run --coverage",
+        "bench": "vitest bench --run",
         "start": "vite demo/ --config demo/vite.config.ts",
         "start:open": "vite demo/ --config demo/vite.config.ts --open",
         "lint": "eslint --cache --report-unused-disable-directives --report-unused-inline-configs warn --max-warnings 0 .",
