@@ -36,6 +36,8 @@ export {
     type SLDMetadataComponent,
     type SLDMetadataComponentSize,
     type SLDMetadataNode,
+    lazyMount,
+    type LazyMountOptions,
 } from '@powsybl/network-viewer-core';
 
 // Re-export from @powsybl/network-map-layers
