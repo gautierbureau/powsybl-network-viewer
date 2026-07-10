@@ -16,19 +16,22 @@ export function getDistance(point1: Point, point2: Point): number {
     return Math.hypot(deltax, deltay);
 }
 
+// number of decimal places used for SVG geometry coordinates by default
+export const DEFAULT_GEOMETRY_PRECISION = 2;
+
 // format number to string
-export function getFormattedValue(value: number): string {
-    return value.toFixed(2);
+export function getFormattedValue(value: number, precision: number = DEFAULT_GEOMETRY_PRECISION): string {
+    return value.toFixed(precision);
 }
 
 // format point to string
-export function getFormattedPoint(point: Point): string {
-    return getFormattedValue(point.x) + ',' + getFormattedValue(point.y);
+export function getFormattedPoint(point: Point, precision: number = DEFAULT_GEOMETRY_PRECISION): string {
+    return getFormattedValue(point.x, precision) + ',' + getFormattedValue(point.y, precision);
 }
 
 // format points to polyline string
-export function getFormattedPolyline(points: Point[]): string {
-    return points.map((point) => getFormattedPoint(point)).join(' ');
+export function getFormattedPolyline(points: Point[], precision: number = DEFAULT_GEOMETRY_PRECISION): string {
+    return points.map((point) => getFormattedPoint(point, precision)).join(' ');
 }
 
 // transform angle degrees to radians

@@ -17,4 +17,10 @@ export interface SvgWriterParametersOptions {
 
     // elements with these CSS classes should not be added
     voltageLevels?: string[];
+
+    // number of decimal places for the emitted SVG geometry coordinates.
+    // Fewer decimals produce a smaller SVG (less to parse, style and lay out)
+    // at the cost of coordinate accuracy. Defaults to DEFAULT_GEOMETRY_PRECISION
+    // (2), which keeps the output identical to before this option existed.
+    geometryPrecision?: number;
 }
