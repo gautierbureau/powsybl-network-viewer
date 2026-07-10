@@ -9,6 +9,7 @@
 import { Point } from '@svgdotjs/svg.js';
 import {
     BusNodeMetadata,
+    DiagramMetadata,
     DiagramPaddingMetadata,
     EdgeMetadata,
     NodeMetadata,
@@ -593,4 +594,71 @@ test('getEdgeType', () => {
     };
     expect(MetadataUtils.getEdgeType(edge)).toBe(EdgeType.TWO_WINDINGS_TRANSFORMER);
     expect(MetadataUtils.getStringEdgeType(edge)).toBe('TWO_WINDINGS_TRANSFORMER');
+});
+
+// --- indexed metadata lookups (O(1) WeakMap-backed) ----------------------
+
+function node(svgId: string): NodeMetadata {
+    return { svgId, equipmentId: 'eq_' + svgId, x: 0, y: 0 };
+}
+
+function busNode(svgId: string, vlNode: string, index: number): BusNodeMetadata {
+    return { svgId, equipmentId: 'eq_' + svgId, nbNeighbours: 0, index, vlNode };
+}
+
+function edge(svgId: string, node1: string, node2: string): EdgeMetadata {
+    return { svgId, equipmentId: 'eq_' + svgId, node1, node2, busNode1: 'b1', busNode2: 'b2', type: 'LineEdge' };
+}
+
+function metadata(nodes: NodeMetadata[], busNodes: BusNodeMetadata[]): DiagramMetadata {
+    return { nodes, busNodes } as unknown as DiagramMetadata;
+}
+
+test('getNodeMetadata resolves by svgId and keeps the first occurrence', () => {
+    const n0 = node('0');
+    const n1 = node('1');
+    const duplicate = node('1');
+    const diagramMetadata = metadata([n0, n1, duplicate], []);
+    expect(MetadataUtils.getNodeMetadata('0', diagramMetadata)).toBe(n0);
+    expect(MetadataUtils.getNodeMetadata('1', diagramMetadata)).toBe(n1); // first, not the duplicate
+    expect(MetadataUtils.getNodeMetadata('missing', diagramMetadata)).toBeUndefined();
+    expect(MetadataUtils.getNodeMetadata('0', null)).toBeUndefined();
+});
+
+test('getBusNodeMetadata resolves by svgId', () => {
+    const b0 = busNode('b0', 'vl0', 0);
+    const b1 = busNode('b1', 'vl0', 1);
+    const diagramMetadata = metadata([], [b0, b1]);
+    expect(MetadataUtils.getBusNodeMetadata('b1', diagramMetadata)).toBe(b1);
+    expect(MetadataUtils.getBusNodeMetadata('missing', diagramMetadata)).toBeUndefined();
+});
+
+test('getBusNodesMetadata groups by voltage-level node and sorts by bus index', () => {
+    const a0 = busNode('a0', 'vlA', 0);
+    const a1 = busNode('a1', 'vlA', 1);
+    const b0 = busNode('b0', 'vlB', 0);
+    const busNodes = [a1, b0, a0]; // deliberately unsorted / interleaved
+    const vlA = MetadataUtils.getBusNodesMetadata('vlA', busNodes);
+    expect(vlA).toEqual([a0, a1]); // sorted by index
+    expect(MetadataUtils.getBusNodesMetadata('vlB', busNodes)).toEqual([b0]);
+    expect(MetadataUtils.getBusNodesMetadata('vlMissing', busNodes)).toEqual([]);
+});
+
+test('getNodeEdgesMetadata returns every edge touching a node, order preserved', () => {
+    const e01 = edge('e01', '0', '1');
+    const e12 = edge('e12', '1', '2');
+    const loop = edge('loop', '1', '1');
+    const edges = [e01, e12, loop];
+    expect(MetadataUtils.getNodeEdgesMetadata('1', edges)).toEqual([e01, e12, loop]); // loop listed once
+    expect(MetadataUtils.getNodeEdgesMetadata('0', edges)).toEqual([e01]);
+    expect(MetadataUtils.getNodeEdgesMetadata('missing', edges)).toEqual([]);
+});
+
+test('indexed lookups stay correct across repeated calls on the same arrays', () => {
+    // second call must hit the cached index and return identical results
+    const edges = [edge('e01', '0', '1'), edge('e02', '0', '2')];
+    const first = MetadataUtils.getNodeEdgesMetadata('0', edges);
+    const second = MetadataUtils.getNodeEdgesMetadata('0', edges);
+    expect(second).toEqual(first);
+    expect(second).toEqual([edges[0], edges[1]]);
 });

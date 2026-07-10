@@ -39,6 +39,41 @@ const NodeTypeMapping: { [key: string]: NodeType } = {
     BOUNDARY: NodeType.BOUNDARY,
 };
 
+// --- O(1) metadata lookup indices ----------------------------------------
+// The SVG writer resolves metadata per element while (re)drawing nodes and
+// edges: for every node it looks up its bus nodes and edges, for every edge its
+// end nodes, etc. Doing that with Array.find/filter is O(n) per lookup and
+// O(n^2) over a whole diagram, which dominates adaptive-zoom redraws of large
+// networks. We build these indices once per metadata array and reuse them for
+// every lookup. The cache is keyed on the array reference through a WeakMap:
+// the NAD metadata arrays are never mutated in place nor reassigned, so an
+// index stays valid for a diagram's whole lifetime and is dropped
+// automatically when the metadata (and its arrays) is replaced.
+function getOrBuildIndex<K extends object, V>(cache: WeakMap<K, V>, key: K, build: (key: K) => V): V {
+    let value = cache.get(key);
+    if (value === undefined) {
+        value = build(key);
+        cache.set(key, value);
+    }
+    return value;
+}
+
+const nodesBySvgId = new WeakMap<NodeMetadata[], Map<string, NodeMetadata>>();
+const busNodesBySvgId = new WeakMap<BusNodeMetadata[], Map<string, BusNodeMetadata>>();
+const sortedBusNodesByVlNode = new WeakMap<BusNodeMetadata[], Map<string, BusNodeMetadata[]>>();
+const edgesByNode = new WeakMap<EdgeMetadata[], Map<string, EdgeMetadata[]>>();
+
+function indexBySvgId<T extends { svgId: string }>(elements: T[]): Map<string, T> {
+    const index = new Map<string, T>();
+    // keep the first occurrence, matching the previous Array.find semantics
+    for (const element of elements) {
+        if (!index.has(element.svgId)) {
+            index.set(element.svgId, element);
+        }
+    }
+    return index;
+}
+
 export function getBendableLines(edges: EdgeMetadata[] | undefined): EdgeMetadata[] {
     // group edges by edge ends
     const groupedEdges: Map<string, EdgeMetadata[]> = new Map<string, EdgeMetadata[]>();
@@ -152,11 +187,19 @@ export function getBusNodeMetadata(
     busNodeId: string,
     diagramMetadata: DiagramMetadata | null
 ): BusNodeMetadata | undefined {
-    return diagramMetadata?.busNodes.find((busNode) => busNode.svgId == busNodeId);
+    const busNodes = diagramMetadata?.busNodes;
+    if (!busNodes) {
+        return undefined;
+    }
+    return getOrBuildIndex(busNodesBySvgId, busNodes, indexBySvgId).get(busNodeId);
 }
 
 export function getNodeMetadata(nodeId: string, diagramMetadata: DiagramMetadata | null): NodeMetadata | undefined {
-    return diagramMetadata?.nodes.find((node) => node.svgId == nodeId);
+    const nodes = diagramMetadata?.nodes;
+    if (!nodes) {
+        return undefined;
+    }
+    return getOrBuildIndex(nodesBySvgId, nodes, indexBySvgId).get(nodeId);
 }
 
 // get node move (original and new position)
@@ -339,12 +382,49 @@ export function getStringEdgeType(edge: EdgeMetadata): string {
 }
 
 export function getBusNodesMetadata(nodeId: string, busNodes: BusNodeMetadata[]): BusNodeMetadata[] {
-    const buses = busNodes.filter((bus) => bus.vlNode === nodeId);
-    return getSortedBusNodes(buses);
+    const index = getOrBuildIndex(sortedBusNodesByVlNode, busNodes, (elements) => {
+        // group by voltage-level node, then sort each group exactly as
+        // getSortedBusNodes did (a sparse array indexed by bus index)
+        const grouped = new Map<string, BusNodeMetadata[]>();
+        for (const bus of elements) {
+            const group = grouped.get(bus.vlNode);
+            if (group) {
+                group.push(bus);
+            } else {
+                grouped.set(bus.vlNode, [bus]);
+            }
+        }
+        const sorted = new Map<string, BusNodeMetadata[]>();
+        for (const [vlNode, group] of grouped) {
+            sorted.set(vlNode, getSortedBusNodes(group));
+        }
+        return sorted;
+    });
+    return index.get(nodeId) ?? [];
 }
 
 export function getNodeEdgesMetadata(nodeId: string, edges: EdgeMetadata[]): EdgeMetadata[] {
-    return edges.filter((edge) => edge.node1 == nodeId || edge.node2 == nodeId);
+    const index = getOrBuildIndex(edgesByNode, edges, (elements) => {
+        // group edges by each distinct end node, preserving array order; a loop
+        // edge (node1 === node2) is listed once, matching the previous filter
+        const grouped = new Map<string, EdgeMetadata[]>();
+        const add = (nodeKey: string, edge: EdgeMetadata) => {
+            const group = grouped.get(nodeKey);
+            if (group) {
+                group.push(edge);
+            } else {
+                grouped.set(nodeKey, [edge]);
+            }
+        };
+        for (const edge of elements) {
+            add(edge.node1, edge);
+            if (edge.node2 !== edge.node1) {
+                add(edge.node2, edge);
+            }
+        }
+        return grouped;
+    });
+    return index.get(nodeId) ?? [];
 }
 
 export function getBusEdgesMetadata(nodeId: string, edges: EdgeMetadata[]): Map<string, EdgeMetadata[]> {
