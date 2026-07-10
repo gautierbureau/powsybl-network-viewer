@@ -43,3 +43,6 @@ export {
     type SLDMetadataComponentSize,
     type SLDMetadataNode,
 } from './single-line-diagram-viewer/single-line-diagram-viewer';
+
+// Lazy off-screen mounting helper
+export { lazyMount, type LazyMountOptions } from './lazy-mount';
