@@ -176,7 +176,10 @@ export class NetworkAreaDiagramViewer {
         this.diagramMetadata = diagramMetadata;
         this.nadViewerParameters = new NadViewerParameters(nadViewerParametersOptions ?? undefined);
         if (this.nadViewerParameters.getCreateSvgFromMetadata() && this.diagramMetadata != null) {
-            this.svgWriter = new SvgWriter({ diagramMetadata: this.diagramMetadata });
+            this.svgWriter = new SvgWriter({
+                diagramMetadata: this.diagramMetadata,
+                geometryPrecision: this.nadViewerParameters.getGeometryPrecision(),
+            });
             this.svgContent = this.svgWriter.getEmptySvg();
         }
         this.width = 0;
@@ -2194,6 +2197,7 @@ export class NetworkAreaDiagramViewer {
                 diagramMetadata: this.diagramMetadata,
                 elementList: { nodes: nodes, edges: edges },
                 voltageLevels: maxDisplayedSize > nodeVlThreshold.threshold ? nodeVlThreshold.voltageLevels : undefined,
+                geometryPrecision: this.nadViewerParameters.getGeometryPrecision(),
             });
             svgWriter.addNodes(<SVGGElement>this.nodesSection!);
             svgWriter.addEdgesAndInfos(<SVGGElement>this.edgesSection!);
