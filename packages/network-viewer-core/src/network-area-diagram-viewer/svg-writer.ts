@@ -49,6 +49,7 @@ export class SvgWriter {
     nodes: NodeMetadata[] | undefined = undefined;
     edges: EdgeMetadata[] | undefined = undefined;
     voltageLevels: string[] | undefined;
+    geometryPrecision: number;
 
     constructor(svgWriterOptions: SvgWriterParametersOptions) {
         this.diagramMetadata = svgWriterOptions.diagramMetadata;
@@ -56,8 +57,22 @@ export class SvgWriter {
         this.nodes = svgWriterOptions.elementList?.nodes;
         this.edges = svgWriterOptions.elementList?.edges;
         this.voltageLevels = svgWriterOptions.voltageLevels;
+        this.geometryPrecision = svgWriterOptions.geometryPrecision ?? DiagramUtils.DEFAULT_GEOMETRY_PRECISION;
         // get edge router, for computing edges points
         this.edgeRouter = new EdgeRouter(this.diagramMetadata, this.edges);
+    }
+
+    // coordinate formatting helpers honouring the configured geometry precision
+    private getFormattedValue(value: number): string {
+        return DiagramUtils.getFormattedValue(value, this.geometryPrecision);
+    }
+
+    private getFormattedPoint(point: Point): string {
+        return DiagramUtils.getFormattedPoint(point, this.geometryPrecision);
+    }
+
+    private getFormattedPolyline(points: Point[]): string {
+        return DiagramUtils.getFormattedPolyline(points, this.geometryPrecision);
     }
 
     public getSvg(textBoxSize?: { width: number; height: number }): string {
@@ -159,17 +174,14 @@ export class SvgWriter {
             gNodeElement.classList.add(SvgWriter.BOUNDARY_BUS_CLASS);
         }
         SvgUtils.addCssClasses(gNodeElement, node.classes);
-        gNodeElement.setAttribute(
-            'transform',
-            'translate(' + DiagramUtils.getFormattedPoint(new Point(node.x, node.y)) + ')'
-        );
+        gNodeElement.setAttribute('transform', 'translate(' + this.getFormattedPoint(new Point(node.x, node.y)) + ')');
         // add buses
         if (node.unknownBus) {
             const circleElement = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
             circleElement.classList.add(SvgWriter.UNKNOWN_BUS_CLASS);
             circleElement.setAttribute(
                 'r',
-                DiagramUtils.getFormattedValue(
+                this.getFormattedValue(
                     this.svgParameters.getVoltageLevelCircleRadius() + this.svgParameters.getUnknownBusNodeExtraRadius()
                 )
             );
@@ -205,7 +217,7 @@ export class SvgWriter {
             circleElement.id = busNode.svgId;
             SvgUtils.addCssClasses(circleElement, busNode.classes, SvgWriter.BUS_CLASS);
             SvgUtils.addElementStyle(circleElement, busNode.style);
-            circleElement.setAttribute('r', DiagramUtils.getFormattedValue(nodeRadius.busOuterRadius));
+            circleElement.setAttribute('r', this.getFormattedValue(nodeRadius.busOuterRadius));
             return circleElement;
         } else {
             const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -330,7 +342,7 @@ export class SvgWriter {
             const polylineElement = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
             SvgUtils.addCssClasses(polylineElement, cssClasses, SvgWriter.EDGE_CLASS);
             SvgUtils.addElementStyle(polylineElement, style);
-            polylineElement.setAttribute('points', DiagramUtils.getFormattedPolyline(points));
+            polylineElement.setAttribute('points', this.getFormattedPolyline(points));
             return polylineElement;
         }
     }
@@ -367,11 +379,11 @@ export class SvgWriter {
             points.at(-2)!,
             -this.svgParameters.getTransformerCircleRadius()
         );
-        transformerCircleElement.setAttribute('cx', DiagramUtils.getFormattedValue(circleCenter.x));
-        transformerCircleElement.setAttribute('cy', DiagramUtils.getFormattedValue(circleCenter.y));
+        transformerCircleElement.setAttribute('cx', this.getFormattedValue(circleCenter.x));
+        transformerCircleElement.setAttribute('cy', this.getFormattedValue(circleCenter.y));
         transformerCircleElement.setAttribute(
             'r',
-            DiagramUtils.getFormattedValue(this.svgParameters.getTransformerCircleRadius())
+            this.getFormattedValue(this.svgParameters.getTransformerCircleRadius())
         );
         return transformerCircleElement;
     }
@@ -394,7 +406,7 @@ export class SvgWriter {
         const polylineElement = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
         polylineElement.classList.add(SvgWriter.HVDC_CLASS);
         const csPoints = DiagramUtils.getConverterStationPoints(points, this.svgParameters.getConverterStationWidth());
-        polylineElement.setAttribute('points', DiagramUtils.getFormattedPolyline(csPoints));
+        polylineElement.setAttribute('points', this.getFormattedPolyline(csPoints));
         gHVDCLineElement.appendChild(polylineElement);
         return gHVDCLineElement;
     }
@@ -424,7 +436,7 @@ export class SvgWriter {
     private getThreeWTPolyline(points: Point[]): SVGPolylineElement {
         const polylineElement = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
         polylineElement.classList.add(SvgWriter.EDGE_CLASS);
-        polylineElement.setAttribute('points', DiagramUtils.getFormattedPolyline(points));
+        polylineElement.setAttribute('points', this.getFormattedPolyline(points));
         return polylineElement;
     }
 
@@ -447,7 +459,7 @@ export class SvgWriter {
         gThreeWTElement.id = threeWT.svgId;
         gThreeWTElement.setAttribute(
             'transform',
-            'translate(' + DiagramUtils.getFormattedPoint(new Point(threeWT.x, threeWT.y)) + ')'
+            'translate(' + this.getFormattedPoint(new Point(threeWT.x, threeWT.y)) + ')'
         );
         // add windings
         const twtEdges = MetadataUtils.getNodeEdgesMetadata(threeWT.svgId, this.diagramMetadata.edges);
@@ -484,11 +496,11 @@ export class SvgWriter {
             threeWTPoint,
             this.svgParameters.getTransformerCircleRadius()
         );
-        transformerCircleElement.setAttribute('cx', DiagramUtils.getFormattedValue(circleCenter.x - threeWTPoint.x));
-        transformerCircleElement.setAttribute('cy', DiagramUtils.getFormattedValue(circleCenter.y - threeWTPoint.y));
+        transformerCircleElement.setAttribute('cx', this.getFormattedValue(circleCenter.x - threeWTPoint.x));
+        transformerCircleElement.setAttribute('cy', this.getFormattedValue(circleCenter.y - threeWTPoint.y));
         transformerCircleElement.setAttribute(
             'r',
-            DiagramUtils.getFormattedValue(this.svgParameters.getTransformerCircleRadius())
+            this.getFormattedValue(this.svgParameters.getTransformerCircleRadius())
         );
         return transformerCircleElement;
     }
@@ -529,7 +541,7 @@ export class SvgWriter {
         const gInfoElement = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         gInfoElement.id = info.svgId;
         if (infoPoint) {
-            gInfoElement.setAttribute('transform', 'translate(' + DiagramUtils.getFormattedPoint(infoPoint) + ')');
+            gInfoElement.setAttribute('transform', 'translate(' + this.getFormattedPoint(infoPoint) + ')');
         }
         // add arrows
         this.addEdgeInfoArrows(gInfoElement, info, infoAngle);
@@ -593,9 +605,9 @@ export class SvgWriter {
     ): SVGPathElement {
         const edgeInfoArrowElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         if (arrowAngle) {
-            let arrowString: string = 'rotate(' + DiagramUtils.getFormattedValue(arrowAngle) + ')';
+            let arrowString: string = 'rotate(' + this.getFormattedValue(arrowAngle) + ')';
             if (shift) {
-                arrowString += ' translate(' + DiagramUtils.getFormattedPoint(new Point(0, shift)) + ')';
+                arrowString += ' translate(' + this.getFormattedPoint(new Point(0, shift)) + ')';
             }
             edgeInfoArrowElement.setAttribute('transform', arrowString);
         }
@@ -623,8 +635,8 @@ export class SvgWriter {
     ): SVGTextElement {
         const edgeInfoLabelElement = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         edgeInfoLabelElement.innerHTML = DiagramUtils.getFormattedInfoLabel(label, type, this.svgParameters);
-        edgeInfoLabelElement.setAttribute('transform', 'rotate(' + DiagramUtils.getFormattedValue(angle) + ')');
-        edgeInfoLabelElement.setAttribute('x', DiagramUtils.getFormattedValue(shift));
+        edgeInfoLabelElement.setAttribute('transform', 'rotate(' + this.getFormattedValue(angle) + ')');
+        edgeInfoLabelElement.setAttribute('x', this.getFormattedValue(shift));
         if (style) {
             edgeInfoLabelElement.setAttribute('style', style);
         }
@@ -642,7 +654,7 @@ export class SvgWriter {
         if (middleInfoPoint) {
             gEdgeMiddleInfoElement.setAttribute(
                 'transform',
-                'translate(' + DiagramUtils.getFormattedPoint(middleInfoPoint) + ')'
+                'translate(' + this.getFormattedPoint(middleInfoPoint) + ')'
             );
         }
         // add arrows

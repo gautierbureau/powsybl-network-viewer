@@ -27,3 +27,25 @@ test('testFourSubstationsNetworkCustomStyle', () => {
     const expected = getSvgFromFile('../resources/test-data/nad-four-substations_custom.svg');
     expect(actual).toEqualSvg(expected, { epsilon: 0.1 });
 });
+
+test('geometryPrecision controls the number of coordinate decimals and the SVG size', () => {
+    const writeSvg = (geometryPrecision: number) =>
+        new SvgWriter({ diagramMetadata: IEE14CdfNetworkMetadata, geometryPrecision }).getSvg({ width: 0, height: 0 });
+
+    const svg0 = writeSvg(0);
+    const svg2 = writeSvg(2);
+    const svg3 = writeSvg(3);
+
+    // omitting the option keeps the default (2) behaviour, byte-for-byte
+    const svgDefault = new SvgWriter({ diagramMetadata: IEE14CdfNetworkMetadata }).getSvg({ width: 0, height: 0 });
+    expect(svg2).toBe(svgDefault);
+
+    // fewer decimals -> strictly smaller SVG
+    expect(svg0.length).toBeLessThan(svg2.length);
+    expect(svg2.length).toBeLessThan(svg3.length);
+
+    // at precision 2 some translate coordinates carry decimals; at precision 0 none do
+    const translateWithDecimal = /translate\([^)]*\.[^)]*\)/;
+    expect(translateWithDecimal.test(svg2)).toBe(true);
+    expect(translateWithDecimal.test(svg0)).toBe(false);
+});
