@@ -151,6 +151,12 @@ export interface NadViewerParametersOptions {
 
     // Whether to create the SVG from diagram metadata, instead of using the SVG content provided as input
     createSvgFromMetadata?: boolean;
+
+    // Number of decimal places for the SVG geometry coordinates when the SVG is (re)built from
+    // metadata (see createSvgFromMetadata and the adaptive zoom). Fewer decimals produce a smaller,
+    // faster-to-parse SVG at the cost of coordinate accuracy. Defaults to 2, which keeps the
+    // generated SVG identical to before this option existed.
+    geometryPrecision?: number;
 }
 
 export class NadViewerParameters {
@@ -265,5 +271,11 @@ export class NadViewerParameters {
             this.nadViewerParametersOptions?.createSvgFromMetadata ??
             NadViewerParameters.CREATE_SVG_FROM_METADATA_DEFAULT
         );
+    }
+
+    // Returns the configured geometry precision, or undefined to let the SVG writer apply its own
+    // default (DEFAULT_GEOMETRY_PRECISION).
+    public getGeometryPrecision(): number | undefined {
+        return this.nadViewerParametersOptions?.geometryPrecision;
     }
 }
